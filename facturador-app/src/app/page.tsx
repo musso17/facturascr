@@ -10,6 +10,7 @@ import {
   FileText,
   Loader2,
   Pencil,
+  Wallet,
 } from 'lucide-react';
 import {
   Area,
@@ -27,7 +28,10 @@ import {
 } from 'recharts';
 import { useInvoices } from '@/hooks/use-invoices';
 import { useExpenses } from '@/hooks/use-expenses';
-import { asLocalDate, summarizeInvoices, shortenName } from '@/lib/accounting-service';
+import {
+  asLocalDate, summarizeInvoices,
+  filterByMonth, shortenName
+} from '@/lib/accounting-service';
 import type { InvoiceRecord } from '@/lib/accounting-types';
 import { FinancialReportButton } from '@/components/FinancialReportButton';
 
@@ -166,6 +170,7 @@ export default function DashboardPage() {
                 className="rounded-xl border border-gray-200 px-3 py-2 text-sm text-gray-700 outline-none focus-visible:ring-2 focus-visible:ring-blue-100"
               >
                 <option value="todos">Todo el año</option>
+                <option value="historico">Todo el histórico</option>
                 {monthOptions.map((option) => (
                   <option key={option.value} value={option.value}>
                     {option.label}
@@ -173,6 +178,13 @@ export default function DashboardPage() {
                 ))}
               </select>
               <FinancialReportButton invoices={invoices} expenses={expenses} />
+              <Link
+                href="/cierre-anual"
+                className="flex items-center gap-2 rounded-xl border border-gray-200 px-4 py-2 text-sm font-semibold text-gray-700 transition-all duration-200 hover:-translate-y-0.5 hover:border-gray-300 hover:bg-gray-50"
+              >
+                <Wallet className="h-4 w-4 text-purple-600" />
+                Cierre Anual
+              </Link>
               <button
                 type="button"
                 onClick={handleRefresh}
@@ -641,10 +653,7 @@ function buildMonthOptions(list: { issueDate: string }[]) {
     .map((value) => ({ value, label: formatMonthLabel(value) }));
 }
 
-function filterByMonth<T extends { issueDate: string }>(list: T[], month: string) {
-  if (month === 'todos') return list;
-  return list.filter((item) => formatMonthKey(item.issueDate) === month);
-}
+
 
 function formatMonthKey(value: string) {
   return asLocalDate(value).toISOString().slice(0, 7);

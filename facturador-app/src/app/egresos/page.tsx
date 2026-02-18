@@ -8,7 +8,7 @@ import {
 } from '@/lib/accounting-types';
 import { useExpenses } from '@/hooks/use-expenses';
 import { usePartners } from '@/hooks/use-partners';
-import { ChangeEvent, FormEvent, useMemo, useState, ReactNode } from 'react';
+import { ChangeEvent, FormEvent, useMemo, useState, ReactNode, useRef } from 'react';
 import {
   ArrowRightLeft,
   Calendar,
@@ -23,7 +23,13 @@ import {
   AlertCircle,
   X,
 } from 'lucide-react';
-import { asLocalDate } from '@/lib/accounting-service';
+import {
+  asLocalDate,
+  formatMonthLabel,
+  filterByMonth,
+  shortenName,
+  toMonthKey,
+} from '@/lib/accounting-service';
 
 const currencyFormatter = new Intl.NumberFormat('es-PE', {
   style: 'currency',
@@ -182,6 +188,72 @@ export default function EgresosPage() {
   const [monthFilter, setMonthFilter] = useState('todos');
   const [busyExpenseId, setBusyExpenseId] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isScanning, setIsScanning] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleFileUpload = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 5 * 1024 * 1024) {
+      setFormError('El archivo es muy pesado (máximo 5MB).');
+      return;
+    }
+
+    setIsScanning(true);
+    setFormError(null);
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const res = await fetch('/api/scan-invoice', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Error al procesar el documento');
+      }
+
+      const { data } = await res.json();
+
+      if (data) {
+        setForm(prev => ({
+          ...prev,
+          documentType: data.documentType || prev.documentType,
+          documentSeries: data.documentSeries || prev.documentSeries,
+          documentNumber: data.documentNumber || prev.documentNumber,
+          issueDate: data.issueDate || prev.issueDate,
+          dueDate: data.dueDate || prev.dueDate,
+          providerName: data.providerName || prev.providerName,
+          providerDocument: data.ruc || prev.providerDocument,
+          concept: data.description || prev.concept,
+          baseAmount: data.baseAmount ? String(data.baseAmount) : prev.baseAmount,
+          igvAmount: data.igvAmount ? String(data.igvAmount) : prev.igvAmount,
+          category: (data.category as ExpenseCategory) || prev.category,
+        }));
+
+        // Auto-calculate IGV if base is present but IGV is not
+        if (data.baseAmount && !data.igvAmount) {
+          const base = Number(data.baseAmount);
+          const igv = (base * 0.18).toFixed(2);
+          setForm(prev => ({ ...prev, igvAmount: String(igv) }));
+        }
+
+        setIsModalOpen(true);
+      }
+    } catch (error) {
+      console.error(error);
+      setFormError('No se pudo leer el documento. Intenta ingresar los datos manualmente.');
+    } finally {
+      setIsScanning(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    }
+  };
 
   const monthOptions = useMemo(() => buildMonthOptions(expenses), [expenses]);
 
@@ -336,16 +408,49 @@ export default function EgresosPage() {
             <h1 className="text-3xl font-semibold text-slate-900 md:text-4xl">
               Control de gastos
             </h1>
-            <button onClick={() => setIsModalOpen(true)} className="flex items-center gap-2 px-4 py-2 text-sm font-medium bg-slate-900 text-white rounded-lg hover:bg-slate-800">
-              <Plus className="w-4 h-4" />
-              Registrar Egreso
-            </button>
+            <div className="flex gap-2">
+              <input
+                type="file"
+                ref={fileInputRef}
+                className="hidden"
+                accept="image/*,.pdf"
+                onChange={handleFileUpload}
+                disabled={isScanning}
+              />
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isScanning}
+                className="flex items-center gap-2 px-4 py-2 text-sm font-medium bg-white text-slate-700 border border-slate-300 rounded-lg hover:bg-slate-50 disabled:opacity-50"
+              >
+                {isScanning ? (
+                  <>
+                    <div className="w-4 h-4 rounded-full border-2 border-slate-500 border-t-transparent animate-spin" />
+                    Analizando...
+                  </>
+                ) : (
+                  <>
+                    <Receipt className="w-4 h-4" />
+                    Escanear
+                  </>
+                )}
+              </button>
+              <button onClick={() => setIsModalOpen(true)} className="flex items-center gap-2 px-4 py-2 text-sm font-medium bg-slate-900 text-white rounded-lg hover:bg-slate-800">
+                <Plus className="w-4 h-4" />
+                Registrar Egreso
+              </button>
+            </div>
           </div>
         </header>
 
         {syncError && (
           <p className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
             {syncError}
+          </p>
+        )}
+
+        {formError && !isModalOpen && (
+          <p className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+            {formError}
           </p>
         )}
 
@@ -395,6 +500,7 @@ export default function EgresosPage() {
             <div className="flex flex-wrap gap-3 mt-4">
               <select value={monthFilter} onChange={e => setMonthFilter(e.target.value)} className="px-4 py-2 border border-slate-300 rounded-lg text-slate-700 focus:ring-2 focus:ring-blue-500">
                 <option value="todos">Todo el año</option>
+                <option value="historico">Todo el histórico</option>
                 {monthOptions.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
               </select>
               <button onClick={resetFilters} className="px-4 py-2 text-blue-600 hover:bg-blue-50 rounded-lg font-medium">
@@ -505,182 +611,17 @@ export default function EgresosPage() {
       </div>
       <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title="Registrar Egreso">
         <form className="mt-4 space-y-4" onSubmit={handleSubmit}>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <label className="text-sm font-medium text-slate-600">
-                Tipo
-                <select
-                  value={form.documentType}
-                  onChange={(event) =>
-                    setForm((prev) => ({ ...prev, documentType: event.target.value as ExpenseDocumentType }))
-                  }
-                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-blue-500"
-                >
-                  {DOCUMENT_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="text-sm font-medium text-slate-600">
-                Serie · Número
-                <div className="mt-1 grid gap-2 sm:grid-cols-2">
-                  <input
-                    value={form.documentSeries}
-                    onChange={(event) =>
-                      setForm((prev) => ({ ...prev, documentSeries: event.target.value.toUpperCase() }))
-                    }
-                    placeholder="F001"
-                    maxLength={4}
-                    className="rounded-lg border border-slate-300 px-3 py-2 text-sm uppercase outline-none focus:border-blue-500"
-                  />
-                  <input
-                    value={form.documentNumber}
-                    onChange={(event) =>
-                      setForm((prev) => ({ ...prev, documentNumber: event.target.value }))
-                    }
-                    placeholder="00012345"
-                    maxLength={12}
-                    className="rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-blue-500"
-                  />
-                </div>
-              </label>
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <label className="text-sm font-medium text-slate-600">
-                Fecha emisión
-                <input
-                  type="date"
-                  value={form.issueDate}
-                  onChange={(event) => setForm((prev) => ({ ...prev, issueDate: event.target.value }))}
-                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none"
-                />
-              </label>
-              <label className="text-sm font-medium text-slate-600">
-                Fecha vencimiento
-                <input
-                  type="date"
-                  value={form.dueDate}
-                  onChange={(event) => setForm((prev) => ({ ...prev, dueDate: event.target.value }))}
-                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none"
-                />
-              </label>
-            </div>
+          <div className="grid gap-3 sm:grid-cols-2">
             <label className="text-sm font-medium text-slate-600">
-              Proveedor / Profesional
-              <input
-                value={form.providerName}
-                list="partner-options"
-                onChange={(event) => {
-                  const name = event.target.value;
-                  const match = partners.find(
-                    (partner) => partner.name === name || partner.tradeName === name,
-                  );
-                  setForm((prev) => ({
-                    ...prev,
-                    providerName: name,
-                    providerDocument: match?.documentNumber ?? prev.providerDocument,
-                  }));
-                }}
-                placeholder="Nombre o razón social"
-                className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none"
-              />
-              <datalist id="partner-options">
-                {partners.map((partner) => (
-                  <option key={partner.id} value={partner.name} />
-                ))}
-                {partners.map(
-                  (partner) =>
-                    partner.tradeName && (
-                      <option key={`${partner.id}-trade`} value={partner.tradeName} />
-                    ),
-                )}
-              </datalist>
-            </label>
-            <label className="text-sm font-medium text-slate-600">
-              RUC / DNI
-              <input
-                value={form.providerDocument}
-                onChange={(event) =>
-                  setForm((prev) => ({ ...prev, providerDocument: event.target.value }))
-                }
-                placeholder="Documento"
-                className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none"
-              />
-            </label>
-            <label className="text-sm font-medium text-slate-600">
-              Concepto
-              <input
-                value={form.concept}
-                onChange={(event) => setForm((prev) => ({ ...prev, concept: event.target.value }))}
-                placeholder="Descripción del servicio o producto"
-                className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none"
-              />
-            </label>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <label className="text-sm font-medium text-slate-600">
-                Monto base
-                <input
-                  type="number"
-                  step="0.01"
-                  value={form.baseAmount}
-                  onChange={handleAutoIgv}
-                  placeholder="0.00"
-                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none"
-                />
-              </label>
-              <label className="text-sm font-medium text-slate-600">
-                IGV (18%)
-                <input
-                  type="number"
-                  step="0.01"
-                  value={form.igvAmount}
-                  onChange={(event) =>
-                    setForm((prev) => ({ ...prev, igvAmount: event.target.value }))
-                  }
-                  placeholder="0.00"
-                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none"
-                />
-              </label>
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <label className="text-sm font-medium text-slate-600">
-                Retención IR (8%)
-                <input
-                  type="number"
-                  step="0.01"
-                  value={form.irRetention}
-                  onChange={(event) =>
-                    setForm((prev) => ({ ...prev, irRetention: event.target.value }))
-                  }
-                  placeholder="0.00"
-                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none"
-                />
-              </label>
-              <label className="text-sm font-medium text-slate-600">
-                Otros impuestos
-                <input
-                  type="number"
-                  step="0.01"
-                  value={form.otherTaxes}
-                  onChange={(event) =>
-                    setForm((prev) => ({ ...prev, otherTaxes: event.target.value }))
-                  }
-                  placeholder="0.00"
-                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none"
-                />
-              </label>
-            </div>
-            <label className="text-sm font-medium text-slate-600">
-              Método de pago
+              Tipo
               <select
-                value={form.paymentMethod}
+                value={form.documentType}
                 onChange={(event) =>
-                  setForm((prev) => ({ ...prev, paymentMethod: event.target.value as PaymentMethod }))
+                  setForm((prev) => ({ ...prev, documentType: event.target.value as ExpenseDocumentType }))
                 }
-                className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none"
+                className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-blue-500"
               >
-                {PAYMENT_OPTIONS.map((option) => (
+                {DOCUMENT_OPTIONS.map((option) => (
                   <option key={option.value} value={option.value}>
                     {option.label}
                   </option>
@@ -688,30 +629,195 @@ export default function EgresosPage() {
               </select>
             </label>
             <label className="text-sm font-medium text-slate-600">
-              Categoría
-              <select
-                value={form.category}
-                onChange={(event) =>
-                  setForm((prev) => ({ ...prev, category: event.target.value as ExpenseCategory }))
-                }
-                className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none"
-              >
-                {CATEGORY_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
+              Serie · Número
+              <div className="mt-1 grid gap-2 sm:grid-cols-2">
+                <input
+                  value={form.documentSeries}
+                  onChange={(event) =>
+                    setForm((prev) => ({ ...prev, documentSeries: event.target.value.toUpperCase() }))
+                  }
+                  placeholder="F001"
+                  maxLength={4}
+                  className="rounded-lg border border-slate-300 px-3 py-2 text-sm uppercase outline-none focus:border-blue-500"
+                />
+                <input
+                  value={form.documentNumber}
+                  onChange={(event) =>
+                    setForm((prev) => ({ ...prev, documentNumber: event.target.value }))
+                  }
+                  placeholder="00012345"
+                  maxLength={12}
+                  className="rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-blue-500"
+                />
+              </div>
             </label>
-            {formError && <p className="text-sm font-semibold text-rose-600">{formError}</p>}
-            <button
-              type="submit"
-              className="w-full rounded-lg bg-slate-900 py-3 text-center text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:opacity-60"
-              disabled={isSaving}
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="text-sm font-medium text-slate-600">
+              Fecha emisión
+              <input
+                type="date"
+                value={form.issueDate}
+                onChange={(event) => setForm((prev) => ({ ...prev, issueDate: event.target.value }))}
+                className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none"
+              />
+            </label>
+            <label className="text-sm font-medium text-slate-600">
+              Fecha vencimiento
+              <input
+                type="date"
+                value={form.dueDate}
+                onChange={(event) => setForm((prev) => ({ ...prev, dueDate: event.target.value }))}
+                className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none"
+              />
+            </label>
+          </div>
+          <label className="text-sm font-medium text-slate-600">
+            Proveedor / Profesional
+            <input
+              value={form.providerName}
+              list="partner-options"
+              onChange={(event) => {
+                const name = event.target.value;
+                const match = partners.find(
+                  (partner) => partner.name === name || partner.tradeName === name,
+                );
+                setForm((prev) => ({
+                  ...prev,
+                  providerName: name,
+                  providerDocument: match?.documentNumber ?? prev.providerDocument,
+                }));
+              }}
+              placeholder="Nombre o razón social"
+              className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none"
+            />
+            <datalist id="partner-options">
+              {partners.map((partner) => (
+                <option key={partner.id} value={partner.name} />
+              ))}
+              {partners.map(
+                (partner) =>
+                  partner.tradeName && (
+                    <option key={`${partner.id}-trade`} value={partner.tradeName} />
+                  ),
+              )}
+            </datalist>
+          </label>
+          <label className="text-sm font-medium text-slate-600">
+            RUC / DNI
+            <input
+              value={form.providerDocument}
+              onChange={(event) =>
+                setForm((prev) => ({ ...prev, providerDocument: event.target.value }))
+              }
+              placeholder="Documento"
+              className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none"
+            />
+          </label>
+          <label className="text-sm font-medium text-slate-600">
+            Concepto
+            <input
+              value={form.concept}
+              onChange={(event) => setForm((prev) => ({ ...prev, concept: event.target.value }))}
+              placeholder="Descripción del servicio o producto"
+              className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none"
+            />
+          </label>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="text-sm font-medium text-slate-600">
+              Monto base
+              <input
+                type="number"
+                step="0.01"
+                value={form.baseAmount}
+                onChange={handleAutoIgv}
+                placeholder="0.00"
+                className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none"
+              />
+            </label>
+            <label className="text-sm font-medium text-slate-600">
+              IGV (18%)
+              <input
+                type="number"
+                step="0.01"
+                value={form.igvAmount}
+                onChange={(event) =>
+                  setForm((prev) => ({ ...prev, igvAmount: event.target.value }))
+                }
+                placeholder="0.00"
+                className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none"
+              />
+            </label>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="text-sm font-medium text-slate-600">
+              Retención IR (8%)
+              <input
+                type="number"
+                step="0.01"
+                value={form.irRetention}
+                onChange={(event) =>
+                  setForm((prev) => ({ ...prev, irRetention: event.target.value }))
+                }
+                placeholder="0.00"
+                className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none"
+              />
+            </label>
+            <label className="text-sm font-medium text-slate-600">
+              Otros impuestos
+              <input
+                type="number"
+                step="0.01"
+                value={form.otherTaxes}
+                onChange={(event) =>
+                  setForm((prev) => ({ ...prev, otherTaxes: event.target.value }))
+                }
+                placeholder="0.00"
+                className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none"
+              />
+            </label>
+          </div>
+          <label className="text-sm font-medium text-slate-600">
+            Método de pago
+            <select
+              value={form.paymentMethod}
+              onChange={(event) =>
+                setForm((prev) => ({ ...prev, paymentMethod: event.target.value as PaymentMethod }))
+              }
+              className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none"
             >
-              {isSaving ? 'Guardando...' : 'Registrar egreso'}
-            </button>
-          </form>
+              {PAYMENT_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="text-sm font-medium text-slate-600">
+            Categoría
+            <select
+              value={form.category}
+              onChange={(event) =>
+                setForm((prev) => ({ ...prev, category: event.target.value as ExpenseCategory }))
+              }
+              className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none"
+            >
+              {CATEGORY_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          {formError && <p className="text-sm font-semibold text-rose-600">{formError}</p>}
+          <button
+            type="submit"
+            className="w-full rounded-lg bg-slate-900 py-3 text-center text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:opacity-60"
+            disabled={isSaving}
+          >
+            {isSaving ? 'Guardando...' : 'Registrar egreso'}
+          </button>
+        </form>
       </Modal>
     </div>
   );
@@ -758,24 +864,11 @@ function formatDate(value: string | null | undefined) {
   return dateFormatter.format(asLocalDate(value));
 }
 
-function formatMonthKey(value: string) {
-  return asLocalDate(value).toISOString().slice(0, 7);
-}
 
-function formatMonthLabel(value: string) {
-  const [year, month] = value.split('-').map(Number);
-  const date = new Date(year ?? 1970, (month ?? 1) - 1, 1);
-  return new Intl.DateTimeFormat('es-PE', { month: 'long', year: 'numeric' }).format(date);
-}
 
 function buildMonthOptions(list: { issueDate: string }[]) {
-  const unique = Array.from(new Set(list.map((item) => formatMonthKey(item.issueDate))));
+  const unique = Array.from(new Set(list.map((item) => toMonthKey(item.issueDate))));
   return unique
     .sort((a, b) => (a > b ? -1 : 1))
     .map((value) => ({ value, label: formatMonthLabel(value) }));
-}
-
-function filterByMonth<T extends { issueDate: string }>(list: T[], month: string) {
-  if (month === 'todos') return list;
-  return list.filter((item) => formatMonthKey(item.issueDate) === month);
 }

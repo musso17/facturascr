@@ -1,7 +1,7 @@
 'use client';
 
 import { InvoiceFormState, InvoiceStatus } from '@/lib/accounting-types';
-import { asLocalDate, round, summarizeInvoices, shortenName } from '@/lib/accounting-service';
+import { asLocalDate, round, summarizeInvoices, shortenName, filterByMonth } from '@/lib/accounting-service';
 import { useInvoices } from '@/hooks/use-invoices';
 import { usePartners } from '@/hooks/use-partners';
 import {
@@ -175,8 +175,9 @@ export default function IngresosPage() {
     isLoading,
     createInvoice,
     createInvoiceFromXML,
-  applyManualPayment,
-  markAsPaid: markInvoiceAsPaid,
+    applyManualPayment,
+    markAsPaid: markInvoiceAsPaid,
+
   } = useInvoices();
   const { partners } = usePartners();
   const [searchTerm, setSearchTerm] = useState('');
@@ -357,7 +358,7 @@ export default function IngresosPage() {
   };
 
   // Revert payment handler removed because not used in UI; keep revertInvoicePayment available from hooks
-  
+
   const resetFilters = () => {
     setSearchTerm('');
     setStatusFilter('todos');
@@ -472,6 +473,7 @@ export default function IngresosPage() {
             <div className="flex flex-wrap gap-3 mt-4">
               <select value={monthFilter} onChange={e => setMonthFilter(e.target.value)} className="px-4 py-2 border border-slate-300 rounded-lg text-slate-700 focus:ring-2 focus:ring-blue-500">
                 <option value="todos">Todo el año</option>
+                <option value="historico">Todo el histórico</option>
                 {monthOptions.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
               </select>
               <select value={clientFilter} onChange={e => setClientFilter(e.target.value)} className="px-4 py-2 border border-slate-300 rounded-lg text-slate-700 focus:ring-2 focus:ring-blue-500">
@@ -713,7 +715,7 @@ export default function IngresosPage() {
           </div>
           <div className="rounded-xl bg-slate-50 p-3 text-sm text-slate-600">
             <p>
-              Total estimado: 
+              Total estimado:
               <span className="font-semibold text-slate-900">
                 {formatCurrency(
                   round((Number(form.amount) || 0) * (1 + (Number(form.vat) || 0) / 100)),
@@ -881,7 +883,4 @@ function buildMonthOptions(list: { issueDate: string }[]) {
     .map((value) => ({ value, label: formatMonthLabel(value) }));
 }
 
-function filterByMonth<T extends { issueDate: string }>(list: T[], month: string) {
-  if (month === 'todos') return list;
-  return list.filter((item) => formatMonthKey(item.issueDate) === month);
-}
+

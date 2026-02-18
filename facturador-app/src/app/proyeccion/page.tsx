@@ -9,7 +9,7 @@ import {
   Zap,
   TrendingUp,
   Scale,
-  
+
   Activity,
   AlertTriangle,
 } from 'lucide-react';
@@ -48,7 +48,7 @@ interface CashflowData {
 
 interface Scenario {
   utilidad_anual: number;
-  sobrevive: boolean;
+  sobrevive?: boolean;
   analisis: string;
 }
 
@@ -59,7 +59,7 @@ interface Analysis {
   };
   capacity_analysis: {
     ingresos_max_mensual: number;
-    analisis:string;
+    analisis: string;
   };
   scenarios: {
     pesimista: Scenario;
@@ -73,6 +73,7 @@ interface ProjectionResponse {
   pnl_projection: PnlData[];
   cashflow_projection: CashflowData[];
   analysis: Analysis;
+  isFallback?: boolean;
 }
 
 // --- Main Component ---
@@ -83,6 +84,8 @@ export default function ProyeccionPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedScenario, setSelectedScenario] = useState<'pesimista' | 'realista' | 'optimista'>('realista');
+  const [optimisticRate, setOptimisticRate] = useState(30);
+  const [pessimisticRate, setPessimisticRate] = useState(30);
 
   const generateProjection = useCallback(
     async (force: boolean = false) => {
@@ -115,11 +118,13 @@ export default function ProyeccionPage() {
             mode: 'projection',
             invoices: mapInvoicesForAI(invoices),
             expenses: mapExpensesForAI(expenses),
+            rates: { optimistic: optimisticRate, pessimistic: pessimisticRate },
           }),
         });
 
         if (!response.ok) {
-          throw new Error('Error al generar la proyección. Intenta de nuevo.');
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.error || `Error ${response.status}: Error al generar la proyección.`);
         }
 
         const responseData: ProjectionResponse = await response.json();
@@ -161,9 +166,16 @@ export default function ProyeccionPage() {
           </div>
           <div>
             <button
+              onClick={() => window.print()}
+              disabled={isLoading || !data}
+              className="mr-3 rounded-lg bg-white border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:opacity-60 no-print"
+            >
+              Imprimir Reporte
+            </button>
+            <button
               onClick={() => generateProjection(true)}
               disabled={isLoading || isLoadingInvoices || isLoadingExpenses}
-              className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:opacity-60"
+              className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:opacity-60 no-print"
             >
               {isLoading ? (
                 <span className="flex items-center gap-2">
@@ -183,6 +195,67 @@ export default function ProyeccionPage() {
 
         {!isLoading && data && (
           <div className="space-y-8">
+            {data.isFallback && (
+              <div className="rounded-lg bg-yellow-50 border border-yellow-200 p-4 flex items-start gap-3">
+                <AlertTriangle className="w-5 h-5 text-yellow-600 mt-0.5" />
+                <div>
+                  <h4 className="font-semibold text-yellow-800">Proyección generada localmente (Modo Fallback)</h4>
+                  <p className="text-sm text-yellow-700 mt-1">
+                    El servicio de IA no está disponible momentáneamente. Se ha generado una proyección basada en reglas contables y tus promedios históricos.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* Configuration Section */}
+            <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm no-print">
+              <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                <Scale className="w-5 h-5 text-slate-500" />
+                Configuración de Escenarios
+              </h3>
+              <div className="grid md:grid-cols-2 gap-8">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">
+                    Tasa Optimista (+{optimisticRate}%)
+                  </label>
+                  <input
+                    type="range"
+                    min="5"
+                    max="100"
+                    step="5"
+                    value={optimisticRate}
+                    onChange={(e) => setOptimisticRate(Number(e.target.value))}
+                    className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-green-500"
+                  />
+                  <p className="text-xs text-slate-500 mt-1">Crecimiento esperado en el mejor caso.</p>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">
+                    Tasa Pesimista (-{pessimisticRate}%)
+                  </label>
+                  <input
+                    type="range"
+                    min="5"
+                    max="90"
+                    step="5"
+                    value={pessimisticRate}
+                    onChange={(e) => setPessimisticRate(Number(e.target.value))}
+                    className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-red-500"
+                  />
+                  <p className="text-xs text-slate-500 mt-1">Caída esperada en el peor caso.</p>
+                </div>
+              </div>
+              <div className="mt-4 flex justify-end">
+                <button
+                  onClick={() => generateProjection(true)}
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg transition-colors flex items-center gap-2"
+                >
+                  <Zap className="w-4 h-4" />
+                  Recalcular Proyección
+                </button>
+              </div>
+            </div>
+
             <PnlChart data={data.pnl_projection} />
             <CashflowChart data={data.cashflow_projection} />
             <AnalysisSection
@@ -274,21 +347,21 @@ function PnlChart({ data }: { data: PnlData[] }) {
           >
             <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" vertical={false} />
             <XAxis dataKey="mes" />
-            <YAxis 
-              yAxisId="left" 
-              orientation="left" 
+            <YAxis
+              yAxisId="left"
+              orientation="left"
               stroke="#6B7280"
               tickFormatter={formatYAxis}
-              label={{ value: 'S/ (Soles)', angle: -90, position: 'insideLeft', offset: 10 }} 
+              label={{ value: 'S/ (Soles)', angle: -90, position: 'insideLeft', offset: 10 }}
             />
-            <YAxis 
-              yAxisId="right" 
-              orientation="right" 
+            <YAxis
+              yAxisId="right"
+              orientation="right"
               stroke="#6B7280"
-              tickFormatter={(value) => `${value}%`} 
-              label={{ value: '% Margen Neto', angle: 90, position: 'insideRight', offset: 10 }} 
+              tickFormatter={(value) => `${value}%`}
+              label={{ value: '% Margen Neto', angle: 90, position: 'insideRight', offset: 10 }}
             />
-            <Tooltip 
+            <Tooltip
               formatter={(value: unknown) => {
                 if (value === null || value === undefined) return '-';
                 const num = typeof value === 'number' ? value : Number(String(value));
@@ -407,12 +480,12 @@ function CashflowChart({ data, initialCash = 0 }: { data: CashflowData[]; initia
               </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" vertical={false} />
               <XAxis dataKey="mes" stroke="#6B7280" />
-              <YAxis 
+              <YAxis
                 stroke="#6B7280"
                 tickFormatter={formatYAxis}
-                label={{ value: 'S/ (Soles)', angle: -90, position: 'insideLeft', offset: 10 }} 
+                label={{ value: 'S/ (Soles)', angle: -90, position: 'insideLeft', offset: 10 }}
               />
-              <Tooltip 
+              <Tooltip
                 formatter={(value: unknown) => {
                   if (value === null || value === undefined) return '-';
                   const num = typeof value === 'number' ? value : Number(String(value));
@@ -422,23 +495,23 @@ function CashflowChart({ data, initialCash = 0 }: { data: CashflowData[]; initia
                 contentStyle={{ backgroundColor: '#1F2937', border: 'none', borderRadius: '8px', color: '#F3F4F6' }}
               />
               <Legend content={renderCustomLegend} />
-              
+
               {/* Income Bars (Green) */}
-              <Bar 
-                dataKey="ingresos_percibidos" 
-                fill="#10B981" 
+              <Bar
+                dataKey="ingresos_percibidos"
+                fill="#10B981"
                 name="Caja Recibida"
                 radius={[4, 4, 0, 0]}
               />
-              
+
               {/* Expense Bars (Red) */}
-              <Bar 
-                dataKey="egresos_totales" 
-                fill="#EF4444" 
+              <Bar
+                dataKey="egresos_totales"
+                fill="#EF4444"
                 name="Caja Gastada"
                 radius={[4, 4, 0, 0]}
               />
-              
+
               {/* Balance Area (Gray Background) */}
               <Area
                 type="monotone"
@@ -477,59 +550,62 @@ function AnalysisSection({
           <div className="flex flex-wrap gap-2 mb-6">
             <button
               onClick={() => setSelectedScenario('pesimista')}
-              className={`px-4 py-2 text-sm font-semibold rounded-lg transition ${
-                selectedScenario === 'pesimista'
-                  ? 'bg-red-500 text-white'
-                  : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-              }`}
+              className={`px-4 py-2 text-sm font-semibold rounded-lg transition ${selectedScenario === 'pesimista'
+                ? 'bg-red-500 text-white'
+                : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                }`}
             >
               Modo Pánico (Pesimista)
             </button>
             <button
               onClick={() => setSelectedScenario('realista')}
-              className={`px-4 py-2 text-sm font-semibold rounded-lg transition ${
-                selectedScenario === 'realista'
-                  ? 'bg-orange-500 text-white'
-                  : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-              }`}
+              className={`px-4 py-2 text-sm font-semibold rounded-lg transition ${selectedScenario === 'realista'
+                ? 'bg-orange-500 text-white'
+                : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                }`}
             >
               Modo Carbono (Realista)
             </button>
             <button
               onClick={() => setSelectedScenario('optimista')}
-              className={`px-4 py-2 text-sm font-semibold rounded-lg transition ${
-                selectedScenario === 'optimista'
-                  ? 'bg-green-500 text-white'
-                  : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-              }`}
+              className={`px-4 py-2 text-sm font-semibold rounded-lg transition ${selectedScenario === 'optimista'
+                ? 'bg-green-500 text-white'
+                : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                }`}
             >
               Modo Expansión (Optimista)
             </button>
           </div>
           {selectedScenario && analysis.scenarios[selectedScenario] && (
-            <InfoCard
-              title={`Escenario: ${selectedScenario.charAt(0).toUpperCase() + selectedScenario.slice(1)}`}
-              icon={
-                selectedScenario === 'pesimista'
+            <div className="mt-6 flex gap-6 rounded-lg bg-slate-50 p-6 border border-slate-100">
+              <div className="flex-shrink-0">
+                {selectedScenario === 'pesimista'
                   ? <AlertTriangle className="h-6 w-6 text-red-500" />
                   : selectedScenario === 'optimista'
-                  ? <TrendingUp className="h-6 w-6 text-green-500" />
-                  : <Scale className="h-6 w-6 text-orange-500" />
-              }
-            >
-              <p className="text-3xl font-bold">
-                {`s/${(analysis.scenarios[selectedScenario].utilidad_anual || 0).toLocaleString()}`}
-                <span className="text-sm font-normal text-slate-500">/año</span>
-              </p>
-              <p className="mt-2 text-sm text-slate-600">
-                {analysis.scenarios[selectedScenario].analisis}
-              </p>
-              {selectedScenario === 'pesimista' && (
-                <p className={`mt-2 text-sm font-semibold ${analysis.scenarios[selectedScenario].sobrevive ? 'text-green-600' : 'text-red-600'}`}>
-                  {analysis.scenarios[selectedScenario].sobrevive ? '¡El negocio sobrevive!' : '¡Riesgo de insolvencia!'}
-                </p>
-              )}
-            </InfoCard>
+                    ? <TrendingUp className="h-6 w-6 text-green-500" />
+                    : <Scale className="h-6 w-6 text-orange-500" />
+                }
+              </div>
+              <div>
+                <h4 className="font-semibold text-slate-800">
+                  {`Escenario: ${selectedScenario.charAt(0).toUpperCase() + selectedScenario.slice(1)}`}
+                </h4>
+                <div className="mt-2">
+                  <p className="text-3xl font-bold">
+                    {`s/${(analysis.scenarios[selectedScenario].utilidad_anual || 0).toLocaleString()}`}
+                    <span className="text-sm font-normal text-slate-500">/año</span>
+                  </p>
+                  <p className="mt-2 text-sm text-slate-600">
+                    {analysis.scenarios[selectedScenario].analisis}
+                  </p>
+                  {selectedScenario === 'pesimista' && (
+                    <p className={`mt-2 text-sm font-semibold ${analysis.scenarios[selectedScenario].sobrevive ? 'text-green-600' : 'text-red-600'}`}>
+                      {analysis.scenarios[selectedScenario].sobrevive ? '¡El negocio sobrevive!' : '¡Riesgo de insolvencia!'}
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
           )}
         </div>
       )}

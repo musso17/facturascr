@@ -14,6 +14,15 @@ import {
   analyzeSeasonality,
   projectIncomeWithSeasonality,
 } from '@/lib/accounting-service';
+import {
+  buildProjectionPrompt,
+  generateFallbackByRuleEngine,
+  FinancialSnapshot,
+  buildChatPrompt,
+  buildInsightsPrompt,
+  parseStructuredResponse,
+  defaultInsightResponse,
+} from '@/lib/ai/projection-engine';
 
 const FALLBACK_API_KEY = 'NO_API_KEY_CONFIGURED';
 const API_KEY =
@@ -24,8 +33,8 @@ const DAY_IN_MS = 24 * 60 * 60 * 1000;
 const model =
   API_KEY && API_KEY !== 'NO_API_KEY_CONFIGURED'
     ? new GoogleGenerativeAI(API_KEY).getGenerativeModel({
-        model: MODEL_NAME,
-      })
+      model: MODEL_NAME,
+    })
     : null;
 
 export async function POST(request: NextRequest) {
@@ -41,24 +50,24 @@ export async function POST(request: NextRequest) {
 
   const payload = (await request.json()) as AIRequestPayload;
   console.log('API AI: Payload received.', { mode: payload.mode, hasInvoices: (payload.invoices?.length ?? 0) > 0, hasExpenses: (payload.expenses?.length ?? 0) > 0 });
-  
+
   const invoices = payload.invoices ?? [];
   const expenses = payload.expenses ?? [];
   const snapshot = buildFinancialSnapshot(invoices, expenses);
-    console.log('API AI: Financial snapshot built.', { totals: snapshot.totals, counts: snapshot.counts });
-  
-    const monthlyAggregates = buildMonthlyAggregates(invoices, expenses);
-      console.log('API AI: Monthly aggregates built.', { numAggregates: monthlyAggregates.length });
-    
-      const projectionBaseline = calculateProjectionBaseline(monthlyAggregates, snapshot.totals.cobrado);
-        console.log('API AI: Projection baseline calculated.', projectionBaseline);
-      
-        const financialMetrics = calculateFinancialMetrics(projectionBaseline);
-        console.log('API AI: Financial metrics calculated.', financialMetrics);
-      
-        snapshot.projectionBaseline = projectionBaseline;
-        snapshot.financialMetrics = financialMetrics;
-        console.log('API AI: Snapshot augmented with projection data.');
+  console.log('API AI: Financial snapshot built.', { totals: snapshot.totals, counts: snapshot.counts });
+
+  const monthlyAggregates = buildMonthlyAggregates(invoices, expenses);
+  console.log('API AI: Monthly aggregates built.', { numAggregates: monthlyAggregates.length });
+
+  const projectionBaseline = calculateProjectionBaseline(monthlyAggregates, snapshot.totals.cobrado);
+  console.log('API AI: Projection baseline calculated.', projectionBaseline);
+
+  const financialMetrics = calculateFinancialMetrics(projectionBaseline);
+  console.log('API AI: Financial metrics calculated.', financialMetrics);
+
+  snapshot.projectionBaseline = projectionBaseline;
+  snapshot.financialMetrics = financialMetrics;
+  console.log('API AI: Snapshot augmented with projection data.');
 
   try {
     if (payload.mode === 'chat') {
@@ -95,28 +104,50 @@ export async function POST(request: NextRequest) {
       console.log('API AI: Mode is PROJECTION. Generating content...');
       console.log('API AI: monthlyAggregates count:', monthlyAggregates.length);
       console.log('API AI: projectionBaseline:', JSON.stringify(projectionBaseline, null, 2));
-      
-      const response = await model.generateContent({
-        contents: [
-          {
-            role: 'user',
-            parts: [{ text: buildProjectionPrompt(snapshot, payload.prompt) }],
-          },
-        ],
-      });
+
+      const generateContentWithRetry = async (prompt: string) => {
+        let retries = 0;
+        const maxRetries = 5;
+        const baseDelay = 2000;
+
+        while (true) {
+          try {
+            return await model.generateContent({
+              contents: [
+                {
+                  role: 'user',
+                  parts: [{ text: prompt }],
+                },
+              ],
+            });
+          } catch (error: any) {
+            if (error?.status === 429 || error?.toString().includes('429')) {
+              retries++;
+              if (retries > maxRetries) throw error;
+              const delay = baseDelay * Math.pow(2, retries - 1);
+              console.log(`API AI: Rate limit hit. Retrying in ${delay}ms... (Attempt ${retries}/${maxRetries})`);
+              await new Promise(resolve => setTimeout(resolve, delay));
+              continue;
+            }
+            throw error;
+          }
+        }
+      };
+
+      const response = await generateContentWithRetry(buildProjectionPrompt(snapshot, payload.prompt, payload.rates));
       const rawText = response?.response?.text()?.trim() ?? '{}';
       console.log('API AI: Raw Gemini Projection Response:', rawText);
       const cleaned = rawText.replace(/```json|```/g, '').trim();
       try {
         const parsed = JSON.parse(cleaned);
-        
+
         // INTELLIGENT PATTERN RECOGNITION: Replace AI-generated pnl_projection with seasonality-aware projection
         try {
           // Generate income projection using historical seasonality pattern
           const baselineIncome = projectionBaseline?.ingresosPromedioRecurrentes ?? 0;
           console.log('API AI: Generating seasonality projection with baseline income:', baselineIncome);
           console.log('API AI: monthlyAggregates for seasonality:', monthlyAggregates.length);
-          
+
           if (monthlyAggregates.length === 0) {
             console.warn('API AI: No historical data available, using fallback projection');
             // Fallback: create default projection if no history
@@ -127,7 +158,7 @@ export async function POST(request: NextRequest) {
               const year = futureDate.getFullYear();
               const month = String(futureDate.getMonth() + 1).padStart(2, '0');
               const monthKey = `${year}-${month}`;
-              
+
               parsed.pnl_projection.push({
                 mes: monthKey,
                 ventas_devengado: baselineIncome,
@@ -219,9 +250,28 @@ export async function POST(request: NextRequest) {
 
     console.error('API AI Error: Unsupported mode received.', payload.mode);
     return NextResponse.json({ error: 'Modo no soportado.' }, { status: 400 });
-  } catch (error: unknown) {
+  } catch (error: any) {
     console.error(error);
     console.error('API AI General Error:', error);
+
+    // FALLBACK STRATEGY: If AI fails (Rate Limit or other), generate local projection
+    if (payload.mode === 'projection' && snapshot.projectionBaseline) {
+      console.warn('API AI: Generating fallback projection due to API error.');
+      try {
+        const fallbackData = generateFallbackByRuleEngine(snapshot.projectionBaseline, monthlyAggregates, snapshot.financialMetrics, payload.rates);
+        return NextResponse.json(fallbackData);
+      } catch (fallbackError) {
+        console.error('API AI: Fallback generation also failed.', fallbackError);
+      }
+    }
+
+    if (error?.status === 429 || error?.toString().includes('429')) {
+      return NextResponse.json(
+        { error: 'El sistema de IA está saturado. Se intentó generar una proyección local pero falló. Por favor intenta más tarde.' },
+        { status: 429 }
+      );
+    }
+
     const message =
       payload.mode === 'insights'
         ? 'No se pudieron generar los insights.'
@@ -233,6 +283,8 @@ export async function POST(request: NextRequest) {
   }
 }
 
+
+
 interface AIRequestPayload {
   mode: 'chat' | 'insights' | 'projection';
   question?: string;
@@ -240,52 +292,10 @@ interface AIRequestPayload {
   invoices?: AIInvoiceSummary[];
   expenses?: AIExpenseSummary[];
   messages?: Array<{ role: 'user' | 'assistant'; content: string }>;
+  rates?: { optimistic: number; pessimistic: number };
 }
 
-interface FinancialSnapshot {
-  totals: {
-    facturado: number;
-    cobrado: number;
-    pendiente: number;
-    vencido: number;
-    gastos: number;
-    utilidad: number;
-  };
-  counts: {
-    invoices: number;
-    expenses: number;
-    pendientes: number;
-  };
-  monthlyPerformance: Array<{
-    month: string;
-    label: string;
-    income: number;
-    expenses: number;
-    profit: number;
-  }>;
-  clientRanking: Array<{ client: string; total: number; pending: number }>;
-  expenseCategories: Array<{ category: string; total: number; share: number }>;
-  providerRanking: Array<{ provider: string; total: number }>;
-  overdue: Array<{ id: string; client: string; balance: number; daysOverdue: number }>;
-  upcoming: Array<{ id: string; client: string; balance: number; dueInDays: number }>;
-  highlights: {
-    largestInvoice?: AIInvoiceSummary | null;
-    largestExpense?: AIExpenseSummary | null;
-    newestInvoice?: AIInvoiceSummary | null;
-  };
-  momentum: {
-    incomeChange: number;
-    expenseChange: number;
-    latestMonth?: string;
-    previousMonth?: string;
-  };
-  samples: {
-    invoices: AIInvoiceSummary[];
-    expenses: AIExpenseSummary[];
-  };
-  projectionBaseline?: ProjectionBaseline;
-  financialMetrics?: FinancialMetrics;
-}
+
 
 function buildFinancialSnapshot(
   invoices: AIInvoiceSummary[],
@@ -441,142 +451,7 @@ function buildFinancialSnapshot(
   };
 }
 
-function buildChatPrompt(
-  snapshot: FinancialSnapshot,
-  messages: Array<{ role: 'user' | 'assistant'; content: string }>,
-  question?: string | null,
-) {
-  const history = messages
-    .slice(-6)
-    .map((message) => `${message.role === 'user' ? 'Usuario' : 'Asistente'}: ${message.content}`)
-    .join('\n');
 
-  const currentQuestion = question ?? messages.at(-1)?.content ?? '';
-
-  return [
-    'Eres un asistente contable virtual peruano, experto en SUNAT y finanzas para pymes.',
-    'Tu nombre es Carbon AI y hablas en español latino con tono profesional y cercano.',
-    'Debes responder siempre con pasos concretos, explicar supuestos y sugerir acciones (cobrar, pagar, ahorrar).',
-    'Si el usuario solicita normativa, explica el concepto y cómo aplicarlo a su negocio.',
-    'Cuando no haya datos suficientes, dilo claramente y sugiere qué información se necesita.',
-    '',
-    'Resumen contable en JSON:',
-    JSON.stringify(snapshot, null, 2),
-    '',
-    'Historial reciente de la conversación:',
-    history || 'Sin historial previo.',
-    '',
-    `Pregunta actual: ${currentQuestion}`,
-    '',
-    'Responde en máximo 180 palabras y termina con una recomendación accionable.',
-  ].join('\n');
-}
-
-function buildInsightsPrompt(snapshot: FinancialSnapshot) {
-  return [
-    'Actúa como un analista financiero senior que interpreta los datos de una empresa peruana.',
-    'Debes detectar tendencias, alertas tempranas, comparaciones contra promedio y oportunidades.',
-    'Usa porcentajes, montos en PEN y menciona meses cuando ayude a contextualizar.',
-    'Devuelve tu respuesta en JSON con la forma:',
-    `{
-  "headline": "Resumen con máximo 25 palabras",
-  "alerts": ["Alerta 1", "Alerta 2"],
-  "insights": ["Insight 1", "Insight 2"],
-  "recommendations": ["Acción 1", "Acción 2"]
-}`,
-    'Los arreglos deben contener entre 1 y 4 mensajes cada uno.',
-    'Resumen contable:',
-    JSON.stringify(snapshot, null, 2),
-    'Recuerda responder SOLO con JSON válido, sin explicaciones adicionales.',
-  ].join('\n');
-}
-
-function buildProjectionPrompt(snapshot: FinancialSnapshot, prompt?: string) {
-  return [
-    '# ROL: Consultor Senior en Economía y Estrategia de Negocios (Growth Architect)',
-    '### PERFIL',
-    'Actúa como un experto híbrido con dos facetas clave:',
-    '1. **El Economista Riguroso:** Obsesionado con los datos, el flujo de caja, los márgenes operativos, la economía de escala y los modelos de proyección financiera.',
-    '2. **El Empresario Veterano:** Pragmático, enfocado en la ejecución, la eficiencia operativa y la rentabilidad real (no métricas de vanidad).',
-    '',
-    '### TU MISIÓN',
-    'Tu objetivo es auditar mis ideas de negocio, ayudarme a construir proyecciones financieras sólidas y diseñar hojas de ruta para el crecimiento escalable. No estás aquí para motivarme, estás aquí para asegurar que mi negocio sobreviva y prospere.',
-    '',
-    '### CONCEPTOS CLAVE A APLICAR (NO NEGOCIABLES)',
-    '1. **P&L vs. Flujo de Caja:** Distingue siempre entre Ventas (Devengado) y Caja (Percibido). La proyección debe reflejar el "hueco financiero" por días de crédito. Asume un promedio de días de crédito si no se provee explícitamente.',
-    '2. **Stress Testing (Triángulo de Escenarios):** Genera tres escenarios (Base/Realista, Pesimista, Optimista) para el total anual. El pesimista debe ser un "break-it test" (ej. cliente principal reduce 50%).',
-    '3. **Capacidad Instalada:** Si el negocio es de servicios, basa la proyección de ingresos en horas-hombre disponibles, una tasa de ocupación realista (70-80%), y un precio por hora.',
-    '   Para esta proyección, considera:',
-    '   - Número de Empleados (Full-time equivalentes): 3 (Edson, Mauricio, y el usuario).',
-    '   - Tarifa Promedio por Hora (PEN): 100 (S/100).',
-    '   No asumas que la demanda es infinita. Calcula el "Techo de Facturación Actual" basado en estas cifras.',
-    `4. **Costos Ocultos y "Cisnes Negros":** Incluye un "Colchón de seguridad" del 5-10% de los gastos fijos en tus proyecciones. Considera estacionalidad (B2B es lento en Ene/Feb).`,
-    '',
-    '### MÉTRICAS FINANCIERAS CLAVE (PRE-CALCULADAS):',
-    `Basado en tus datos históricos de los últimos 6 meses, aquí están las métricas fundamentales para el análisis:`,
-    `*   **Costos Fijos Totales (CFT):** S/${snapshot.projectionBaseline?.costosFijosReales?.toFixed(2) ?? 'N/A'} (Promedio mensual real).`,
-    `*   **Tasa de Costo Variable (TCV):** ${(snapshot.projectionBaseline?.tasaCostoVariable ?? 0).toFixed(2)} (${((snapshot.projectionBaseline?.tasaCostoVariable ?? 0) * 100).toFixed(2)}% de las ventas).`,
-    `*   **Punto de Equilibrio (PE) Mensual:** S/${snapshot.financialMetrics?.puntoEquilibrio?.toFixed(2) ?? 'N/A'}. Si tus ventas mensuales son inferiores a este valor, estarás operando con pérdidas.`,
-    `*   **Runway de Caja:** ${
-      (snapshot.financialMetrics?.runway ?? Infinity) === Infinity
-        ? 'Ilimitado (o no aplica por flujo positivo)'
-        : `${snapshot.financialMetrics?.runway?.toFixed(2)} meses`
-    }. Tiempo que tu negocio puede operar con el saldo de caja actual, manteniendo los gastos promedio y sin ingresos adicionales.`,
-    '',
-    '### FORMATO DE RESPUESTA (JSON ESTRICTO)',
-    'Debes responder en formato JSON. Tu respuesta debe ser un objeto JSON con la siguiente estructura:',
-    '{',
-    '  "pnl_projection": [{ "mes": "YYYY-MM", "ventas_devengado": number, "costos_variables": number, "costos_fijos": number, "utilidad_operativa": number }],',
-    '  "cashflow_projection": [{ "mes": "YYYY-MM", "ingresos_percibidos": number, "egresos_totales": number, "flujo_de_caja_neto": number, "saldo_caja_final": number }],',
-  '  "analysis": {',
-  '    "break_even_point": { "valor_mensual": number (en PEN), "analisis": "Análisis sobre el punto de equilibrio." },',
-  '    "capacity_analysis": { "ingresos_max_mensual": number, "analisis": "Análisis de capacidad instalada." },',
-  '    "scenarios": {',
-  '      "pesimista": { "utilidad_anual": number, "sobrevive": boolean, "analisis": "Análisis del escenario pesimista." },',
-  '      "realista": { "utilidad_anual": number, "analisis": "Análisis del escenario realista." },',
-  '      "optimista": { "utilidad_anual": number, "analisis": "Análisis del escenario optimista." }',
-  '    },',
-  '    "growth_strategy": ["Paso táctico 1", "Paso táctico 2", "Paso táctico 3"]',
-  '  }',
-  '}',
-    '',
-    '### DATOS DISPONIBLES',
-    'Resumen contable en JSON:',
-    JSON.stringify(snapshot, null, 2),
-    '',
-    `### INSTRUCCIÓN DEL USUARIO`,
-    `Prompt: ${prompt ?? 'Realiza un análisis exhaustivo y una proyección a 12 meses.'}`,
-    'Recuerda responder SOLO con JSON válido, sin explicaciones adicionales.',
-  ].join('\n');
-}
-
-function parseStructuredResponse(raw?: string | null) {
-  if (!raw) return null;
-  const cleaned = raw.replace(/```json|```/g, '').trim();
-  try {
-    const parsed = JSON.parse(cleaned);
-    return {
-      headline: String(parsed.headline ?? ''),
-      alerts: Array.isArray(parsed.alerts) ? parsed.alerts.map(String) : [],
-      insights: Array.isArray(parsed.insights) ? parsed.insights.map(String) : [],
-      recommendations: Array.isArray(parsed.recommendations)
-        ? parsed.recommendations.map(String)
-        : [],
-    };
-  } catch (error) {
-    console.error('No se pudo parsear la respuesta de Gemini', error);
-    return null;
-  }
-}
-
-function defaultInsightResponse() {
-  return {
-    headline: 'Aún no hay suficiente información contable para detectar tendencias.',
-    alerts: [],
-    insights: ['Registra tus primeras facturas y egresos para activar el análisis automático.'],
-    recommendations: ['Carga ventas y gastos históricos para generar comparativas.'],
-  };
-}
 
 function percentChange(current: number, previous: number) {
   if (!previous) return current ? 100 : 0;

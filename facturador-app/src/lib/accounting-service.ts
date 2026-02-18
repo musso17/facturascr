@@ -78,6 +78,8 @@ function withComputedStatus(
       status = 'Pagado';
     } else if (persistedStatus === 'Pagado' && balance > 0) {
       status = computedStatus;
+    } else if (persistedStatus === 'Pendiente' && computedStatus === 'Vencido') {
+      status = 'Vencido';
     }
   }
 
@@ -530,4 +532,17 @@ export function projectIncomeWithSeasonality(
   }
 
   return result;
+}
+
+/**
+ * Filters a list of items by month key (YYYY-MM).
+ * Supports special keys: 'todos' (current year) and 'historico' (all time).
+ */
+export function filterByMonth<T extends { issueDate: string }>(list: T[], month: string): T[] {
+  if (month === 'historico') return list;
+  if (month === 'todos') {
+    const currentYear = new Date().getFullYear().toString();
+    return list.filter((item) => item.issueDate.startsWith(currentYear));
+  }
+  return list.filter((item) => toMonthKey(item.issueDate) === month);
 }
