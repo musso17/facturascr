@@ -11,13 +11,16 @@
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
     "@supabase/supabase-js": "^2.81.1",
+    "dotenv": "^17.4.2",
     "jspdf": "^3.0.4",
     "jspdf-autotable": "^5.0.2",
     "lucide-react": "^0.553.0",
     "next": "^16.0.7",
     "react": "^19.2.1",
     "react-dom": "^19.2.1",
-    "recharts": "^3.4.1"
+    "recharts": "^3.4.1",
+    "unpdf": "^1.6.0",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

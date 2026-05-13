@@ -14,6 +14,7 @@ import type {
 import {
   Archive,
   Briefcase,
+  Landmark,
   Laptop,
   Megaphone,
   Package,
@@ -36,6 +37,7 @@ const CATEGORY_ICONS: Record<ExpenseCategory, ReactNode> = {
   marketing: <Megaphone className="w-4 h-4 text-slate-500" />,
   administrativos: <Archive className="w-4 h-4 text-slate-500" />,
   equipos: <Laptop className="w-4 h-4 text-slate-500" />,
+  financieros: <Landmark className="w-4 h-4 text-slate-500" />,
   otros: <Briefcase className="w-4 h-4 text-slate-500" />,
 };
 

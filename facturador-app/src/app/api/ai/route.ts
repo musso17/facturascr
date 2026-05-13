@@ -334,11 +334,11 @@ function buildFinancialSnapshot(
     }
     const monthKey = toMonthKey(invoice.issueDate);
     const monthEntry = monthlyMap.get(monthKey) ?? { income: 0, expenses: 0 };
-    monthEntry.income += invoice.total;
+    monthEntry.income += invoice.paid;
     monthlyMap.set(monthKey, monthEntry);
 
     const clientEntry = clientMap.get(invoice.client) ?? { total: 0, pending: 0 };
-    clientEntry.total += invoice.total;
+    clientEntry.total += invoice.paid;
     clientEntry.pending += Math.max(invoice.balance, 0);
     clientMap.set(invoice.client, clientEntry);
 
@@ -362,17 +362,17 @@ function buildFinancialSnapshot(
   });
 
   expenses.forEach((expense) => {
-    totals.gastos += expense.totalAmount;
+    totals.gastos += expense.paidAmount;
     const monthKey = toMonthKey(expense.issueDate);
     const monthEntry = monthlyMap.get(monthKey) ?? { income: 0, expenses: 0 };
-    monthEntry.expenses += expense.totalAmount;
+    monthEntry.expenses += expense.paidAmount;
     monthlyMap.set(monthKey, monthEntry);
 
     const catTotal = expenseCategoryMap.get(expense.category) ?? 0;
-    expenseCategoryMap.set(expense.category, catTotal + expense.totalAmount);
+    expenseCategoryMap.set(expense.category, catTotal + expense.paidAmount);
 
     const providerTotal = providerMap.get(expense.providerName) ?? 0;
-    providerMap.set(expense.providerName, providerTotal + expense.totalAmount);
+    providerMap.set(expense.providerName, providerTotal + expense.paidAmount);
   });
 
   totals.utilidad = totals.cobrado - totals.gastos;

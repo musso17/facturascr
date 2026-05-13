@@ -4,7 +4,31 @@ import {
   InvoiceRecord,
   InvoiceStatus,
   SupabaseInvoiceRow,
+  ExpenseCategory,
+  ExpenseDocumentType,
+  PaymentMethod,
+  SupabaseProjectRow,
+  ProjectRecord,
 } from './accounting-types';
+
+export type ExpenseFormState = {
+  documentType: ExpenseDocumentType;
+  documentSeries: string;
+  documentNumber: string;
+  issueDate: string;
+  dueDate: string;
+  providerName: string;
+  providerDocument: string;
+  concept: string;
+  baseAmount: string;
+  igvAmount: string;
+  irRetention: string;
+  otherTaxes: string;
+  paymentMethod: PaymentMethod;
+  operationNumber: string;
+  category: ExpenseCategory;
+  notes: string;
+};
 
 export function mapInvoiceRow(row: SupabaseInvoiceRow): InvoiceRecord {
   const amount = row.amount ?? 0;
@@ -158,8 +182,8 @@ export interface MonthlyAggregate {
 }
 
 export function buildMonthlyAggregates(
-  invoices: { issueDate: string; total: number }[],
-  expenses: { issueDate: string; totalAmount: number; category: string }[],
+  invoices: { issueDate: string; paid: number }[],
+  expenses: { issueDate: string; paidAmount: number; category: string }[],
 ): MonthlyAggregate[] {
   const monthlyMap = new Map<
     string,
@@ -175,7 +199,7 @@ export function buildMonthlyAggregates(
   invoices.forEach((invoice) => {
     const monthKey = localMonthKey(invoice.issueDate);
     const entry = monthlyMap.get(monthKey) ?? { income: 0, fixedExpenses: 0, variableExpenses: 0 };
-    entry.income += invoice.total;
+    entry.income += invoice.paid;
     monthlyMap.set(monthKey, entry);
   });
 
@@ -183,9 +207,9 @@ export function buildMonthlyAggregates(
     const monthKey = localMonthKey(expense.issueDate);
     const entry = monthlyMap.get(monthKey) ?? { income: 0, fixedExpenses: 0, variableExpenses: 0 };
     if (FIXED_COST_CATEGORIES.includes(expense.category)) {
-      entry.fixedExpenses += expense.totalAmount;
+      entry.fixedExpenses += expense.paidAmount;
     } else {
-      entry.variableExpenses += expense.totalAmount;
+      entry.variableExpenses += expense.paidAmount;
     }
     monthlyMap.set(monthKey, entry);
   });
@@ -391,6 +415,93 @@ export function parseSunatInvoiceXML(xmlContent: string): InvoiceFormState {
   };
 }
 
+export function parseSunatExpenseXML(xmlContent: string): ExpenseFormState {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(xmlContent, 'application/xml');
+  if (doc.querySelector('parsererror')) {
+    throw new Error('El XML tiene un formato inválido.');
+  }
+
+  const resolver = createNamespaceResolver(doc);
+  const pick = (...expressions: string[]) => pickXPathText(doc, resolver, expressions);
+
+  const fullId = pick('/ns:Invoice/cbc:ID') ?? '';
+  if (!fullId) {
+    throw new Error('No se encontró el número de comprobante en el XML.');
+  }
+
+  let series = '';
+  let number = '';
+  if (fullId.includes('-')) {
+    [series, number] = fullId.split('-');
+  } else {
+    number = fullId;
+  }
+
+  const issueDateRaw = pick('/ns:Invoice/cbc:IssueDate') ?? new Date().toISOString();
+  const dueDateRaw =
+    pick(
+      '/ns:Invoice/cac:PaymentTerms[cbc:PaymentMeansID="Cuota001"]/cbc:PaymentDueDate',
+      '/ns:Invoice/cac:PaymentTerms[cbc:PaymentMeansID="Cuota1"]/cbc:PaymentDueDate',
+      '/ns:Invoice/cac:PaymentTerms[cbc:PaymentMeansID="Credito"]/cbc:PaymentDueDate',
+      '(/ns:Invoice/cac:PaymentTerms/cbc:PaymentDueDate)[1]',
+      '/ns:Invoice/cbc:DueDate',
+    ) ?? issueDateRaw;
+
+  const providerName =
+    pick(
+      '/ns:Invoice/cac:AccountingSupplierParty/cac:Party/cac:PartyLegalEntity/cbc:RegistrationName',
+      '/ns:Invoice/cac:AccountingSupplierParty/cac:Party/cbc:Name',
+    ) ?? 'Sin proveedor';
+
+  const providerDocument =
+    pick(
+      '/ns:Invoice/cac:AccountingSupplierParty/cac:Party/cac:PartyIdentification/cbc:ID',
+      '/ns:Invoice/cac:AccountingSupplierParty/cbc:CustomerAssignedAccountID',
+    ) ?? '';
+
+  const description =
+    pick(
+      '(/ns:Invoice/cac:InvoiceLine/cac:Item/cbc:Description)[1]',
+      '(/ns:Invoice/cac:InvoiceLine/cbc:Note)[1]',
+      '(/ns:Invoice/cbc:Note)[1]',
+    ) ?? `Compra ${fullId}`;
+
+  const baseAmountRaw =
+    pick('/ns:Invoice/cac:LegalMonetaryTotal/cbc:LineExtensionAmount') ??
+    pick('(/ns:Invoice/cac:InvoiceLine/cbc:LineExtensionAmount)[1]');
+  const totalAmountRaw = pick('/ns:Invoice/cac:LegalMonetaryTotal/cbc:PayableAmount');
+  const vatAmountRaw =
+    pick('(/ns:Invoice/cac:TaxTotal/cbc:TaxAmount)[1]') ??
+    pick('(/ns:Invoice/cac:InvoiceLine/cac:TaxTotal/cbc:TaxAmount)[1]');
+
+  const baseAmount = parseNumeric(baseAmountRaw);
+  const totalAmount = parseNumeric(totalAmountRaw);
+  const vatAmount = parseNumeric(vatAmountRaw);
+
+  const netAmount = Number.isFinite(baseAmount) ? baseAmount : (totalAmount - (vatAmount || 0));
+  const finalVatAmount = Number.isFinite(vatAmount) ? vatAmount : (totalAmount - netAmount);
+
+  return {
+    documentType: 'factura',
+    documentSeries: series,
+    documentNumber: number,
+    issueDate: toDateInputValue(issueDateRaw),
+    dueDate: toDateInputValue(dueDateRaw),
+    providerName,
+    providerDocument,
+    concept: description,
+    baseAmount: String(round(netAmount || 0)),
+    igvAmount: String(round(finalVatAmount || 0)),
+    irRetention: '0',
+    otherTaxes: '0',
+    paymentMethod: 'transferencia',
+    operationNumber: '',
+    category: 'servicios',
+    notes: 'Importado desde XML',
+  };
+}
+
 function pickXPathText(doc: Document, resolver: XPathNSResolver, expressions: string[]) {
   for (const expression of expressions) {
     const text = getXPathText(doc, expression, resolver);
@@ -534,10 +645,6 @@ export function projectIncomeWithSeasonality(
   return result;
 }
 
-/**
- * Filters a list of items by month key (YYYY-MM).
- * Supports special keys: 'todos' (current year) and 'historico' (all time).
- */
 export function filterByMonth<T extends { issueDate: string }>(list: T[], month: string): T[] {
   if (month === 'historico') return list;
   if (month === 'todos') {
@@ -545,4 +652,32 @@ export function filterByMonth<T extends { issueDate: string }>(list: T[], month:
     return list.filter((item) => item.issueDate.startsWith(currentYear));
   }
   return list.filter((item) => toMonthKey(item.issueDate) === month);
+}
+
+export function mapProjectRow(row: SupabaseProjectRow): ProjectRecord {
+  return {
+    id: row.id,
+    name: row.name,
+    clientId: row.client_id ?? null,
+    // We expect the client name to be populated from a join later if needed, 
+    // or handled directly in the UI. We initialize it empty here.
+    clientName: null, 
+    description: row.description ?? null,
+    status: row.status,
+    billingStatus: row.billing_status,
+    expectedAmount: row.expected_amount,
+    dueDate: row.due_date ? toDateInputValue(row.due_date) : null,
+  };
+}
+
+export function buildProjectPayload(input: ProjectRecord) {
+  return {
+    name: input.name.trim(),
+    client_id: input.clientId || null,
+    description: input.description?.trim() || null,
+    status: input.status,
+    billing_status: input.billingStatus,
+    expected_amount: Number(input.expectedAmount) || 0,
+    due_date: input.dueDate ? toISODate(input.dueDate) : null,
+  };
 }

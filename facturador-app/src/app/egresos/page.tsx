@@ -22,6 +22,7 @@ import {
   Search,
   AlertCircle,
   X,
+  Trash2,
 } from 'lucide-react';
 import {
   asLocalDate,
@@ -62,6 +63,7 @@ const CATEGORY_OPTIONS: { label: string; value: ExpenseCategory }[] = [
   { label: 'Marketing', value: 'marketing' },
   { label: 'Administrativos', value: 'administrativos' },
   { label: 'Equipos', value: 'equipos' },
+  { label: 'Gastos Financieros', value: 'financieros' },
 ];
 
 const PAYMENT_OPTIONS: { label: string; value: PaymentMethod }[] = [
@@ -177,8 +179,16 @@ const STATUS_META: Record<
 };
 
 export default function EgresosPage() {
-  const { expenses, isLoading, syncError, insertExpense, markExpensePaid, revertExpensePayment } =
-    useExpenses();
+  const {
+    expenses,
+    isLoading,
+    syncError,
+    insertExpense,
+    insertExpenseFromXML,
+    markExpensePaid,
+    revertExpensePayment,
+    deleteExpense,
+  } = useExpenses();
   const { partners } = usePartners();
   const [form, setForm] = useState(INITIAL_FORM);
   const [formError, setFormError] = useState<string | null>(null);
@@ -189,7 +199,11 @@ export default function EgresosPage() {
   const [busyExpenseId, setBusyExpenseId] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
+  const [isUploadingXML, setIsUploadingXML] = useState(false);
+  const [xmlUploadError, setXmlUploadError] = useState<string | null>(null);
+  const [xmlUploadMessage, setXmlUploadMessage] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const xmlInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileUpload = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -220,6 +234,44 @@ export default function EgresosPage() {
       const { data } = await res.json();
 
       if (data) {
+        if (data.documentType === 'recibo' && data.documentNumber && data.providerName && data.issueDate && data.baseAmount) {
+          const base = Number(data.baseAmount) || 0;
+          const ir = data.irRetentionAmount ? Number(data.irRetentionAmount) : 0;
+          const total = data.totalAmount ? Number(data.totalAmount) : (base - ir);
+          
+          const result = await insertExpense({
+            documentType: 'recibo',
+            documentSeries: data.documentSeries || null,
+            documentNumber: data.documentNumber,
+            issueDate: data.issueDate,
+            dueDate: data.dueDate || data.issueDate,
+            providerName: data.providerName,
+            providerDocument: data.ruc || null,
+            concept: data.description || 'Servicios profesionales',
+            paymentMethod: 'transferencia',
+            operationNumber: null,
+            paymentDate: null,
+            baseAmount: base,
+            igvAmount: 0,
+            irRetention: ir,
+            otherTaxes: 0,
+            totalAmount: total,
+            category: (data.category as ExpenseCategory) || 'servicios',
+            status: 'pendiente',
+            paidAmount: 0,
+            notes: 'Generado automáticamente al escanear recibo por honorarios',
+          });
+          
+          if (!result.error) {
+            setFormError(null);
+            setIsScanning(false);
+            if (fileInputRef.current) {
+              fileInputRef.current.value = '';
+            }
+            return;
+          }
+        }
+
         setForm(prev => ({
           ...prev,
           documentType: data.documentType || prev.documentType,
@@ -232,11 +284,12 @@ export default function EgresosPage() {
           concept: data.description || prev.concept,
           baseAmount: data.baseAmount ? String(data.baseAmount) : prev.baseAmount,
           igvAmount: data.igvAmount ? String(data.igvAmount) : prev.igvAmount,
+          irRetention: data.irRetentionAmount ? String(data.irRetentionAmount) : prev.irRetention,
           category: (data.category as ExpenseCategory) || prev.category,
         }));
 
         // Auto-calculate IGV if base is present but IGV is not
-        if (data.baseAmount && !data.igvAmount) {
+        if (data.baseAmount && !data.igvAmount && data.documentType !== 'recibo') {
           const base = Number(data.baseAmount);
           const igv = (base * 0.18).toFixed(2);
           setForm(prev => ({ ...prev, igvAmount: String(igv) }));
@@ -253,6 +306,41 @@ export default function EgresosPage() {
         fileInputRef.current.value = '';
       }
     }
+  };
+
+  const handleXMLUpload = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+
+    setXmlUploadError(null);
+    setXmlUploadMessage(null);
+    setIsUploadingXML(true);
+
+    try {
+      const xmlContent = await file.text();
+      const result = await insertExpenseFromXML(xmlContent);
+      if (result.error) {
+        setXmlUploadError(result.error);
+      } else if (result.data) {
+        setXmlUploadMessage(`Egreso ${result.data.documentNumber} registrado correctamente.`);
+        setTimeout(() => {
+          setIsModalOpen(false);
+          setXmlUploadMessage(null);
+        }, 1500);
+      }
+    } catch (error) {
+      console.error(error);
+      setXmlUploadError(
+        error instanceof Error ? error.message : 'No se pudo interpretar el XML.',
+      );
+    } finally {
+      setIsUploadingXML(false);
+    }
+  };
+
+  const triggerXMLUpload = () => {
+    xmlInputRef.current?.click();
   };
 
   const monthOptions = useMemo(() => buildMonthOptions(expenses), [expenses]);
@@ -363,10 +451,22 @@ export default function EgresosPage() {
   };
 
   const handleRevertPaid = async (expenseId: string) => {
+    if (!window.confirm('¿Seguro que deseas marcar este egreso como no pagado?')) return;
     setBusyExpenseId(expenseId);
     await revertExpensePayment(expenseId);
     setBusyExpenseId(null);
   };
+
+  const handleDeleteExpense = async (expenseId: string) => {
+    if (!window.confirm('¿Seguro que deseas eliminar este egreso de forma permanente?')) return;
+    setBusyExpenseId(expenseId);
+    const result = await deleteExpense(expenseId);
+    if (result.error) {
+      alert(result.error);
+    }
+    setBusyExpenseId(null);
+  };
+
 
   const handleAutoIgv = (event: ChangeEvent<HTMLInputElement>) => {
     const value = event.target.value;
@@ -586,8 +686,7 @@ export default function EgresosPage() {
                           </td>
                           <td className="px-4 py-4 text-right whitespace-nowrap">
                             <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                              <button className="p-2 hover:bg-slate-100 rounded-lg text-slate-600 hover:text-blue-600 transition-colors" title="Ver detalles"><Eye className="w-3.5 h-3.5" /></button>
-                              <button className="p-2 hover:bg-slate-100 rounded-lg text-slate-600 hover:text-green-600 transition-colors" title="Editar"><Edit2 className="w-3.5 h-3.5" /></button>
+
                               {expense.status !== 'pagado' ? (
                                 <button onClick={() => handleMarkPaid(expense.id)} disabled={busyExpenseId === expense.id} className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold transition-colors">
                                   Marcar pagado
@@ -597,6 +696,14 @@ export default function EgresosPage() {
                                   Revertir
                                 </button>
                               )}
+                              <button
+                                onClick={() => handleDeleteExpense(expense.id)}
+                                disabled={busyExpenseId === expense.id}
+                                className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                                title="Eliminar"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
                             </div>
                           </td>
                         </tr>
@@ -610,6 +717,36 @@ export default function EgresosPage() {
         </section>
       </div>
       <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title="Registrar Egreso">
+        <div className="rounded-xl bg-slate-900 p-4 text-slate-50">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold uppercase tracking-wide text-slate-300">
+                Importar XML (SUNAT)
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={triggerXMLUpload}
+              disabled={isUploadingXML}
+              className="rounded-lg bg-white/10 px-4 py-2 text-sm font-semibold text-white ring-1 ring-white/30 transition hover:bg-white/20 disabled:opacity-60"
+            >
+              {isUploadingXML ? 'Cargando...' : 'Seleccionar XML'}
+            </button>
+          </div>
+          {xmlUploadMessage && (
+            <p className="mt-3 text-sm font-semibold text-emerald-300">{xmlUploadMessage}</p>
+          )}
+          {xmlUploadError && (
+            <p className="mt-3 text-sm font-semibold text-rose-300">{xmlUploadError}</p>
+          )}
+          <input
+            ref={xmlInputRef}
+            type="file"
+            accept=".xml"
+            className="sr-only"
+            onChange={handleXMLUpload}
+          />
+        </div>
         <form className="mt-4 space-y-4" onSubmit={handleSubmit}>
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="text-sm font-medium text-slate-600">

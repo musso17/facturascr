@@ -199,6 +199,45 @@ export function useInvoices() {
     [invoices],
   );
 
+  const updateInvoice = useCallback(
+    async (invoiceId: string, input: InvoiceFormState): Promise<InvoiceMutationResult> => {
+      const payload = buildInvoicePayload(input);
+      const { data, error } = await supabase
+        .from('invoices')
+        .update(payload)
+        .eq('id', invoiceId)
+        .select()
+        .single();
+
+      if (error) {
+        console.error(error);
+        return { error: describeSupabaseError(error) ?? 'No se pudo actualizar la factura.' };
+      }
+      if (data) {
+        const mapped = mapInvoiceRow(data as SupabaseInvoiceRow);
+        setInvoices((prev) =>
+          prev.map((invoice) => (invoice.recordId === invoiceId ? mapped : invoice)),
+        );
+        return { data: mapped };
+      }
+      return { error: 'Respuesta inesperada de Supabase.' };
+    },
+    [],
+  );
+
+  const deleteInvoice = useCallback(
+    async (invoiceId: string): Promise<{ error?: string }> => {
+      const { error } = await supabase.from('invoices').delete().eq('id', invoiceId);
+      if (error) {
+        console.error(error);
+        return { error: describeSupabaseError(error) ?? 'No se pudo eliminar la factura.' };
+      }
+      setInvoices((prev) => prev.filter((invoice) => invoice.recordId !== invoiceId));
+      return {};
+    },
+    [],
+  );
+
   return {
     invoices,
     isLoading,
@@ -206,6 +245,8 @@ export function useInvoices() {
     refresh: loadInvoices,
     createInvoice,
     createInvoiceFromXML,
+    updateInvoice,
+    deleteInvoice,
     applyManualPayment,
     markAsPaid,
     revertPayment,

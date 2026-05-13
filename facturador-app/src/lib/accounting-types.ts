@@ -25,6 +25,7 @@ export type ExpenseCategory =
   | 'marketing'
   | 'administrativos'
   | 'equipos'
+  | 'financieros'
   | 'otros';
 
 export interface InvoiceFormState {
@@ -180,4 +181,33 @@ export interface MonthlyTaxSummary {
   igvPayable: number;
   irRetentionExpenses: number;
   irWithheldSales: number;
+}
+
+export type ProjectStatus = 'en_progreso' | 'completado' | 'cancelado';
+export type ProjectBillingStatus = 'pendiente' | 'parcial' | 'facturado';
+
+export interface ProjectRecord {
+  id: string;
+  name: string;
+  clientId?: string | null;
+  clientName?: string | null;
+  description?: string | null;
+  status: ProjectStatus;
+  billingStatus: ProjectBillingStatus;
+  expectedAmount: number;
+  dueDate?: string | null;
+}
+
+export interface SupabaseProjectRow {
+  id: string;
+  name: string;
+  client_id?: string | null;
+  description?: string | null;
+  status: ProjectStatus;
+  billing_status: ProjectBillingStatus;
+  expected_amount: number;
+  due_date?: string | null;
+  metadata?: Record<string, unknown> | null;
+  created_at?: string | null;
+  updated_at?: string | null;
 }

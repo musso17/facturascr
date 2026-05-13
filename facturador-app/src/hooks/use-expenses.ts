@@ -6,7 +6,7 @@ import {
   PaymentMethod,
   SupabaseExpenseRow,
 } from '@/lib/accounting-types';
-import { describeSupabaseError } from '@/lib/accounting-service';
+import { describeSupabaseError, parseSunatExpenseXML } from '@/lib/accounting-service';
 import { supabase } from '@/lib/supabase-client';
 
 type ExpenseInput = Omit<
@@ -117,6 +117,45 @@ export function useExpenses() {
     [mapExpenseRow],
   );
 
+  const insertExpenseFromXML = useCallback(
+    async (xmlContent: string) => {
+      try {
+        const parsed = parseSunatExpenseXML(xmlContent);
+        const base = Number(parsed.baseAmount) || 0;
+        const igv = Number(parsed.igvAmount) || 0;
+        const ir = Number(parsed.irRetention) || 0;
+        const other = Number(parsed.otherTaxes) || 0;
+        const total = base + igv + other - ir;
+
+        return await insertExpense({
+          documentType: parsed.documentType,
+          documentSeries: parsed.documentSeries,
+          documentNumber: parsed.documentNumber,
+          issueDate: parsed.issueDate,
+          dueDate: parsed.dueDate,
+          providerName: parsed.providerName,
+          providerDocument: parsed.providerDocument,
+          concept: parsed.concept,
+          baseAmount: base,
+          igvAmount: igv,
+          irRetention: ir,
+          otherTaxes: other,
+          totalAmount: total,
+          category: parsed.category,
+          status: 'pendiente',
+          paidAmount: 0,
+          notes: parsed.notes,
+        });
+      } catch (error) {
+        console.error(error);
+        return {
+          error: error instanceof Error ? error.message : 'No se pudo interpretar el XML.',
+        };
+      }
+    },
+    [insertExpense],
+  );
+
   const updateExpense = useCallback(
     async (id: string, patch: Partial<ExpenseInput>) => {
       const payload: Record<string, unknown> = {};
@@ -179,13 +218,28 @@ export function useExpenses() {
     [updateExpense],
   );
 
+  const deleteExpense = useCallback(
+    async (id: string) => {
+      const { error } = await supabase.from('expenses').delete().eq('id', id);
+      if (error) {
+        console.error(error);
+        return { error: describeSupabaseError(error) ?? 'No se pudo eliminar el egreso.' };
+      }
+      setExpenses((prev) => prev.filter((expense) => expense.id !== id));
+      return { success: true };
+    },
+    [],
+  );
+
   return {
     expenses,
     isLoading,
     syncError,
     refresh: loadExpenses,
     insertExpense,
+    insertExpenseFromXML,
     updateExpense,
+    deleteExpense,
     markExpensePaid,
     revertExpensePayment,
   };

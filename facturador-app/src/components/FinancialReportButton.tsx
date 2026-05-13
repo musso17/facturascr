@@ -159,6 +159,110 @@ export function FinancialReportButton({ invoices, expenses }: FinancialReportBut
                 theme: 'plain',
             });
 
+            const writeNextTitle = (titleText: string) => {
+                let currentY = (doc as any).lastAutoTable.finalY + 15;
+                const pageHt = doc.internal.pageSize.height || doc.internal.pageSize.getHeight();
+                if (currentY > pageHt - 20) {
+                    doc.addPage();
+                    currentY = 20;
+                }
+                doc.setFontSize(14);
+                doc.setTextColor(0, 0, 0);
+                doc.text(titleText, 14, currentY);
+                return currentY;
+            };
+
+            // --- D. Facturación por Cliente ---
+            let sectionY = writeNextTitle('D. Facturación por Cliente');
+
+            const clientMap = new Map<string, { count: number; total: number }>();
+            currentMonthInvoices.forEach(inv => {
+                const name = inv.client || 'Desconocido';
+                const stats = clientMap.get(name) || { count: 0, total: 0 };
+                stats.count += 1;
+                stats.total += inv.total;
+                clientMap.set(name, stats);
+            });
+            const clientStats = Array.from(clientMap.entries()).sort((a, b) => b[1].total - a[1].total);
+
+            autoTable(doc, {
+                startY: sectionY + 5,
+                head: [['Cliente / Razón Social', 'Facturas', 'Total Facturado', 'Promedio/Fact.']],
+                body: clientStats.map(([name, stats]) => [
+                    name,
+                    stats.count.toString(),
+                    formatCurrency(stats.total),
+                    formatCurrency(stats.total / stats.count)
+                ]),
+                theme: 'grid',
+                headStyles: { fillColor: [41, 128, 185] },
+            });
+
+            // --- E. Gastos por Proveedor ---
+            sectionY = writeNextTitle('E. Gastos por Proveedor');
+
+            const providerMap = new Map<string, { count: number; total: number }>();
+            currentMonthExpenses.forEach(exp => {
+                const name = exp.providerName || 'Desconocido';
+                const stats = providerMap.get(name) || { count: 0, total: 0 };
+                stats.count += 1;
+                stats.total += exp.totalAmount;
+                providerMap.set(name, stats);
+            });
+            const providerStats = Array.from(providerMap.entries()).sort((a, b) => b[1].total - a[1].total);
+
+            autoTable(doc, {
+                startY: sectionY + 5,
+                head: [['Proveedor / Persona', 'Egresos', 'Total Gastado', 'Promedio/Egreso']],
+                body: providerStats.map(([name, stats]) => [
+                    name,
+                    stats.count.toString(),
+                    formatCurrency(stats.total),
+                    formatCurrency(stats.total / stats.count)
+                ]),
+                theme: 'grid',
+                headStyles: { fillColor: [231, 76, 60] },
+            });
+
+            // --- F. Registro de Movimientos: Facturas ---
+            sectionY = writeNextTitle('F. Registro de Movimientos: Facturas Emitidas');
+
+            autoTable(doc, {
+                startY: sectionY + 5,
+                head: [['Fecha', 'ID Factura', 'Cliente', 'Estado', 'Subtotal', 'IGV', 'Total']],
+                body: currentMonthInvoices.map(inv => [
+                    asLocalDate(inv.issueDate).toLocaleDateString('es-PE'),
+                    inv.id,
+                    inv.client,
+                    inv.status,
+                    formatCurrency(inv.amount),
+                    formatCurrency(inv.vat),
+                    formatCurrency(inv.total),
+                ]),
+                theme: 'striped',
+                headStyles: { fillColor: [44, 62, 80] },
+                styles: { fontSize: 9 },
+            });
+
+            // --- G. Registro de Movimientos: Egresos ---
+            sectionY = writeNextTitle('G. Registro de Movimientos: Egresos Registrados');
+
+            autoTable(doc, {
+                startY: sectionY + 5,
+                head: [['Fecha', 'Documento', 'Proveedor', 'Categoría', 'Estado', 'Total']],
+                body: currentMonthExpenses.map(exp => [
+                    asLocalDate(exp.issueDate).toLocaleDateString('es-PE'),
+                    exp.documentNumber || '-',
+                    exp.providerName || '-',
+                    exp.category,
+                    exp.status,
+                    formatCurrency(exp.totalAmount),
+                ]),
+                theme: 'striped',
+                headStyles: { fillColor: [44, 62, 80] },
+                styles: { fontSize: 9 },
+            });
+
             doc.save(`Reporte_Mensual_${targetDate.toISOString().slice(0, 10)}.pdf`);
         } catch (error) {
             console.error('Error generating monthly report:', error);
@@ -319,8 +423,123 @@ export function FinancialReportButton({ invoices, expenses }: FinancialReportBut
 
             doc.setFontSize(11);
             doc.setTextColor(50, 50, 50);
+            let finalActionsY = finalY + 10;
             actions.forEach((action, i) => {
                 doc.text(action, 14, finalY + 10 + (i * 8), { maxWidth: 180 });
+                finalActionsY = finalY + 10 + (i * 8);
+            });
+
+            // Helper for the next sections
+            let lastY = finalActionsY;
+            const writeNextTitle = (titleText: string) => {
+                let currentY = lastY + 15;
+                if ((doc as any).lastAutoTable && (doc as any).lastAutoTable.finalY > currentY) {
+                    currentY = (doc as any).lastAutoTable.finalY + 15;
+                }
+                const pageHt = doc.internal.pageSize.height || doc.internal.pageSize.getHeight();
+                if (currentY > pageHt - 20) {
+                    doc.addPage();
+                    currentY = 20;
+                }
+                doc.setFontSize(14);
+                doc.setTextColor(0, 0, 0);
+                doc.text(titleText, 14, currentY);
+                lastY = currentY; // update for the next potential call
+                return currentY;
+            };
+
+            // --- F. Facturación por Cliente ---
+            let sectionY = writeNextTitle('F. Facturación por Cliente (Resumen Anual)');
+
+            const clientMap = new Map<string, { count: number; total: number }>();
+            currentYearInvoices.forEach(inv => {
+                const name = inv.client || 'Desconocido';
+                const stats = clientMap.get(name) || { count: 0, total: 0 };
+                stats.count += 1;
+                stats.total += inv.total;
+                clientMap.set(name, stats);
+            });
+            const clientStats = Array.from(clientMap.entries()).sort((a, b) => b[1].total - a[1].total);
+
+            autoTable(doc, {
+                startY: sectionY + 5,
+                head: [['Cliente / Razón Social', 'Facturas Emitidas', 'Total Facturado', 'Promedio Mensual (12m)']],
+                body: clientStats.map(([name, stats]) => [
+                    name,
+                    stats.count.toString(),
+                    formatCurrency(stats.total),
+                    formatCurrency(stats.total / 12)
+                ]),
+                theme: 'grid',
+                headStyles: { fillColor: [41, 128, 185] },
+            });
+            lastY = (doc as any).lastAutoTable.finalY;
+
+            // --- G. Gastos por Proveedor ---
+            sectionY = writeNextTitle('G. Gastos por Proveedor (Resumen Anual)');
+
+            const providerMap = new Map<string, { count: number; total: number }>();
+            currentYearExpenses.forEach(exp => {
+                const name = exp.providerName || 'Desconocido';
+                const stats = providerMap.get(name) || { count: 0, total: 0 };
+                stats.count += 1;
+                stats.total += exp.totalAmount;
+                providerMap.set(name, stats);
+            });
+            const providerStats = Array.from(providerMap.entries()).sort((a, b) => b[1].total - a[1].total);
+
+            autoTable(doc, {
+                startY: sectionY + 5,
+                head: [['Proveedor / Persona', 'Egresos', 'Total Gastado', 'Promedio Mensual (12m)']],
+                body: providerStats.map(([name, stats]) => [
+                    name,
+                    stats.count.toString(),
+                    formatCurrency(stats.total),
+                    formatCurrency(stats.total / 12)
+                ]),
+                theme: 'grid',
+                headStyles: { fillColor: [231, 76, 60] },
+            });
+            lastY = (doc as any).lastAutoTable.finalY;
+
+            // --- H. Registro de Movimientos: Facturas ---
+            sectionY = writeNextTitle('H. Registro de Movimientos: Facturas Emitidas');
+
+            autoTable(doc, {
+                startY: sectionY + 5,
+                head: [['Fecha', 'ID Factura', 'Cliente', 'Estado', 'Subtotal', 'IGV', 'Total']],
+                body: currentYearInvoices.sort((a, b) => a.issueDate.localeCompare(b.issueDate)).map(inv => [
+                    asLocalDate(inv.issueDate).toLocaleDateString('es-PE'),
+                    inv.id,
+                    inv.client,
+                    inv.status,
+                    formatCurrency(inv.amount),
+                    formatCurrency(inv.vat),
+                    formatCurrency(inv.total),
+                ]),
+                theme: 'striped',
+                headStyles: { fillColor: [44, 62, 80] },
+                styles: { fontSize: 9 },
+            });
+            lastY = (doc as any).lastAutoTable.finalY;
+
+            // --- I. Registro de Movimientos: Egresos ---
+            sectionY = writeNextTitle('I. Registro de Movimientos: Egresos Registrados');
+
+            autoTable(doc, {
+                startY: sectionY + 5,
+                head: [['Fecha', 'Documento', 'Proveedor', 'Categoría', 'Estado', 'Total']],
+                body: currentYearExpenses.sort((a, b) => a.issueDate.localeCompare(b.issueDate)).map(exp => [
+                    asLocalDate(exp.issueDate).toLocaleDateString('es-PE'),
+                    exp.documentNumber || '-',
+                    exp.providerName || '-',
+                    exp.category,
+                    exp.status,
+                    formatCurrency(exp.totalAmount),
+                ]),
+                theme: 'striped',
+                headStyles: { fillColor: [44, 62, 80] },
+                styles: { fontSize: 9 },
             });
 
             doc.save(`Reporte_Anual_${currentYear}.pdf`);

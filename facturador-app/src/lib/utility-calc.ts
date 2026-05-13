@@ -9,6 +9,7 @@ export type CalculationResult = {
     taxProvision: number;
     runwayProvision: number;
     capexProvision: number;
+    trainingCredit: number; // Beneficio MYPE
     netDistributable: number;
 };
 
@@ -105,6 +106,8 @@ export function calculateSmartDistribution(
         monthsOfRunway: number; // e.g., 2
         capexPercent: number; // e.g., 10 (of what? let's assume of Operational Cash Flow to be safe)
         manualMonthlyBurnRate?: number; // Override
+        trainingExpense?: number; // Gastos en capacitación
+        annualPayroll?: number; // Planilla anual (para calcular límite del 3%)
     }
 ): CalculationResult {
     const { totalInvoiced, totalCollected, totalExpenses, operationalCashFlow } = calculateOperationalCashFlow(invoices, expenses);
@@ -122,7 +125,16 @@ export function calculateSmartDistribution(
     // Let's use (Total Invoiced - Total Expenses (Total Amount)) for Tax Base.
     const totalAccruedExpenses = expenses.reduce((sum, e) => sum + e.totalAmount, 0);
     const estimatedTaxableIncome = Math.max(0, totalInvoiced - totalAccruedExpenses);
-    const taxProvision = estimatedTaxableIncome * (params.taxRatePercent / 100);
+    
+    // Cálculo de crédito por capacitación (Límite MYPE: 3% de planilla)
+    const trainingExpense = params.trainingExpense || 0;
+    const payroll = params.annualPayroll || 0;
+    const maxTrainingCredit = payroll * 0.03;
+    const trainingCredit = Math.min(trainingExpense, maxTrainingCredit);
+
+    // Calcular impuesto inicial y deducir crédito (el crédito no puede hacer el impuesto negativo)
+    const baseTaxProvision = estimatedTaxableIncome * (params.taxRatePercent / 100);
+    const taxProvision = Math.max(0, baseTaxProvision - trainingCredit);
 
     // 2. Runway (Fondo de Maniobra)
     // "Costo de Vida Mensual". 
@@ -165,6 +177,7 @@ export function calculateSmartDistribution(
         taxProvision,
         runwayProvision,
         capexProvision,
+        trainingCredit,
         netDistributable
     };
 }

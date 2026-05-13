@@ -95,8 +95,8 @@ export default function DashboardPage() {
     () =>
       lastSixStats.map((item) => ({
         name: item.shortLabel,
-        ingresos: item.income,
-        egresos: item.expense,
+        ingresos: item.incomeBilled,
+        egresos: item.expenseBilled,
         utilidad: item.net,
         flujo: item.cashflow,
       })),
@@ -109,28 +109,28 @@ export default function DashboardPage() {
       value: totals.facturado,
       hint: 'Total emitido',
       accent: 'bg-blue-50 text-blue-600',
-      delta: hasMonthlySelection ? percentChange(currentStats?.income, previousStats?.income) : null,
+      delta: hasMonthlySelection ? percentChange(currentStats?.incomeBilled, previousStats?.incomeBilled) : null,
     },
     {
       label: 'Cobrado',
       value: totals.pagado,
       hint: 'Ingresos recibidos',
       accent: 'bg-green-50 text-green-600',
-      delta: hasMonthlySelection ? percentChange(currentStats?.income, previousStats?.income) : null,
+      delta: hasMonthlySelection ? percentChange(currentStats?.incomeBilled, previousStats?.incomeBilled) : null,
     },
     {
       label: 'Gastos',
       value: expenseSummary.total,
       hint: 'Egresos registrados',
       accent: 'bg-orange-50 text-orange-600',
-      delta: hasMonthlySelection ? percentChange(currentStats?.expense, previousStats?.expense) : null,
+      delta: hasMonthlySelection ? percentChange(currentStats?.expenseBilled, previousStats?.expenseBilled) : null,
     },
     {
       label: 'Utilidad neta',
-      value: totals.pagado - expenseSummary.total,
-      hint: 'Cobrado - Gastos',
+      value: totals.facturado - expenseSummary.total,
+      hint: 'Facturado - Gastos',
       accent: 'bg-purple-50 text-purple-600',
-      tooltip: 'Cobrado - Gastos',
+      tooltip: 'Facturado - Gastos',
       delta: hasMonthlySelection ? percentChange(currentStats?.net ?? 0, previousStats?.net ?? 0) : null,
     },
   ];
@@ -296,7 +296,7 @@ export default function DashboardPage() {
                   Promedio: {formatCurrency(averageNet(lastSixStats))}
                 </div>
               </ChartCard>
-              <ChartCard title="Flujo de caja" subtitle="Acumulado">
+              <ChartCard title="Flujo de caja" subtitle="Basado en cobros y pagos reales">
                 <div className="h-56">
                   <ResponsiveContainer width="100%" height="100%">
                     <AreaChart data={chartData} margin={{ left: -20 }}>
@@ -323,8 +323,11 @@ export default function DashboardPage() {
                     </AreaChart>
                   </ResponsiveContainer>
                 </div>
-                <div className="text-xs text-gray-500">
-                  Último saldo: {formatCurrency(lastSixStats.at(-1)?.cashflow ?? 0)}
+                <div className="flex justify-between items-center text-xs text-gray-500">
+                  <span>Acumulado</span>
+                  <span className="font-bold text-gray-900">
+                    {formatCurrency(lastSixStats.at(-1)?.cashflow ?? 0)}
+                  </span>
                 </div>
               </ChartCard>
             </section>
@@ -547,10 +550,12 @@ type MonthlyPoint = {
   key: string;
   label: string;
   shortLabel: string;
-  income: number;
-  expense: number;
-  net: number;
-  cashflow: number;
+  incomeBilled: number;
+  incomePaid: number;
+  expenseBilled: number;
+  expensePaid: number;
+  net: number; // Accrual basis (Billed)
+  cashflow: number; // Cash basis (Paid)
 };
 
 function averageNet(stats: MonthlyPoint[]) {
@@ -559,36 +564,41 @@ function averageNet(stats: MonthlyPoint[]) {
 }
 
 function buildMonthlyStats(
-  invoices: { issueDate: string; total: number }[],
-  expenses: { issueDate: string; totalAmount: number }[],
+  invoices: { total: number; paid: number; issueDate: string }[],
+  expenses: { totalAmount: number; paidAmount: number; issueDate: string }[],
 ): MonthlyPoint[] {
-  const map = new Map<string, { income: number; expense: number }>();
+  const map = new Map<string, { incomeBilled: number; incomePaid: number; expenseBilled: number; expensePaid: number }>();
   invoices.forEach((invoice) => {
     const key = formatMonthKey(invoice.issueDate);
-    const stored = map.get(key) ?? { income: 0, expense: 0 };
-    stored.income += invoice.total;
+    const stored = map.get(key) ?? { incomeBilled: 0, incomePaid: 0, expenseBilled: 0, expensePaid: 0 };
+    stored.incomeBilled += invoice.total;
+    stored.incomePaid += invoice.paid;
     map.set(key, stored);
   });
   expenses.forEach((expense) => {
     const key = formatMonthKey(expense.issueDate);
-    const stored = map.get(key) ?? { income: 0, expense: 0 };
-    stored.expense += expense.totalAmount;
+    const stored = map.get(key) ?? { incomeBilled: 0, incomePaid: 0, expenseBilled: 0, expensePaid: 0 };
+    stored.expenseBilled += expense.totalAmount;
+    stored.expensePaid += expense.paidAmount;
     map.set(key, stored);
   });
-  let cashflow = 0;
+  let cumulativeCashflow = 0;
   return Array.from(map.entries())
     .sort((a, b) => a[0].localeCompare(b[0]))
     .map(([key, value]) => {
-      const net = value.income - value.expense;
-      cashflow += net;
+      const net = value.incomeBilled - value.expenseBilled;
+      const monthlyCashflow = value.incomePaid - value.expensePaid;
+      cumulativeCashflow += monthlyCashflow;
       return {
         key,
         label: formatMonthLabel(key),
         shortLabel: formatMonthShortLabel(key),
-        income: value.income,
-        expense: value.expense,
+        incomeBilled: value.incomeBilled,
+        incomePaid: value.incomePaid,
+        expenseBilled: value.expenseBilled,
+        expensePaid: value.expensePaid,
         net,
-        cashflow,
+        cashflow: cumulativeCashflow,
       };
     });
 }

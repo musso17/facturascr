@@ -13,8 +13,10 @@ import {
   Loader2,
   LogOut,
   Menu,
+  Scale,
   Settings,
   Wallet,
+  FolderKanban,
 } from 'lucide-react';
 import { useAuth } from './auth-provider';
 
@@ -22,11 +24,12 @@ const NAV_ITEMS = [
   { label: 'Dashboard', hint: 'Resumen general', href: '/', icon: Home, color: 'text-blue-400' },
   { label: 'Ingresos', hint: 'Facturas e ingresos', href: '/ingresos', icon: DollarSign, color: 'text-green-400' },
   { label: 'Egresos', hint: 'Gastos y proveedores', href: '/egresos', icon: Wallet, color: 'text-orange-400' },
+  { label: 'Proyectos', hint: 'Control de ejecución', href: '/proyectos', icon: FolderKanban, color: 'text-indigo-400' },
   { label: 'Reportes', hint: 'Estados y métricas', href: '/reportes', icon: BarChart2, color: 'text-purple-400' },
   { label: 'Impuestos', hint: 'Obligaciones SUNAT', href: '/impuestos', icon: Landmark, color: 'text-red-400' },
   {
-    label: 'Proyección',
-    hint: 'Análisis con IA',
+    label: 'Utilidades',
+    hint: 'Pagos a Socios',
     href: '/proyeccion',
     icon: BrainCircuit,
     color: 'text-teal-400',

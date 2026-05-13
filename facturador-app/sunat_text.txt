@@ -1,0 +1,524 @@
+Marco Estratégico y Normativo del
+Régimen MYPE Tributario en el Perú: Un
+Análisis Integral para la Empresa Cerezo
+en el Ciclo Fiscal 2026
+La arquitectura del sistema tributario peruano ha evolucionado significativamente en la última
+década, consolidando un esquema que busca equilibrar la necesidad de recaudación fiscal con
+el imperativo de fomentar la formalización y el crecimiento de las micro y pequeñas empresas
+(MYPE). Para unidades económicas como la empresa Cerezo, comprender la profundidad de
+estas normativas no solo es una obligación legal, sino una herramienta estratégica para la
+sostenibilidad financiera. En el Perú, las MYPE representan el tejido fundamental de la
+economía, y es bajo esta premisa que la Superintendencia Nacional de Aduanas y de
+Administración Tributaria (SUNAT) administra regímenes diferenciados que permiten una
+transición gradual hacia la madurez corporativa. El presente reporte desglosa con
+exhaustividad las obligaciones, los beneficios y los mecanismos de cumplimiento que rigen
+para estas entidades, con un enfoque particular en las actualizaciones legislativas y operativas
+vigentes para el ejercicio 2026.1
+Evolución y Contexto de la Clasificación Empresarial
+MYPE
+La clasificación de las empresas en el Perú ha abandonado criterios tradicionales, como el
+número de trabajadores, para centrarse exclusivamente en el volumen de ventas anuales
+medidas en Unidades Impositivas Tributarias (UIT). Esta métrica permite una mayor equidad,
+ajustando los beneficios y obligaciones al tamaño real de la facturación del negocio. Para el año
+2026, el valor de la UIT se ha fijado en 	, lo que establece un nuevo parámetro de
+medición para los techos de ingresos de cada categoría empresarial.2
+La determinación de si una empresa se califica como micro o pequeña empresa es el primer
+paso crítico en la planificación tributaria. Una microempresa se define como aquella con ventas
+anuales que no superan las 150 UIT, lo que en términos monetarios para 2026 equivale a
+. Por su parte, la pequeña empresa es aquella cuyo rango de ventas se sitúa
+por encima de las 150 UIT y hasta un máximo de 1,700 UIT, equivalente a 	.4
+Superar este último umbral implica la pérdida automática de la condición de MYPE y la
+migración obligatoria al Régimen General, un cambio que conlleva una estructura de costos y
+
+-- 1 of 15 --
+
+obligaciones significativamente más onerosa.7
+Tabla 1: Umbrales de Clasificación MYPE 2026
+Categoría de
+Empresa
+Límite en UIT 	Límite en Soles (UIT
+S/ 5,500)
+Régimen Tributario
+Sugerido
+Microempresa 	Hasta 150 UIT 	Hasta 	RMT o RER
+Pequeña Empresa 	150 a 1,700 UIT 	Hasta 	RMT
+No MYPE (Régimen
+General)
+Mayor a 1,700 UIT 	Superior a 	Régimen General
+Fuente: Elaboración basada en datos de.3
+El Régimen MYPE Tributario (RMT) como Eje de
+Crecimiento
+El Régimen MYPE Tributario (RMT), creado mediante el Decreto Legislativo N.º 1269, se erige
+como la figura tributaria más adecuada para empresas que, como Cerezo, buscan una
+tributación justa basada en la utilidad real y no solo en los ingresos brutos. A diferencia del
+Régimen Especial de Renta (RER), que grava las ventas de manera plana, el RMT permite la
+deducción de gastos necesarios para producir y mantener la fuente de ingresos, lo que
+garantiza que el impuesto se pague sobre la ganancia neta.1
+Dinámica del Impuesto a la Renta en el RMT
+La estructura del Impuesto a la Renta en este régimen es progresiva y acumulativa, diseñada
+para no asfixiar a las empresas en sus etapas tempranas de rentabilidad. La determinación de
+la obligación se divide en dos fases: los pagos a cuenta mensuales y la regularización anual.
+En la fase mensual, si los ingresos netos anuales no han superado las 300 UIT (
+
+-- 2 of 15 --
+
+en 2026), la empresa abona un pago a cuenta del 	sobre sus ingresos
+netos del mes. Sin embargo, en el momento en que los ingresos acumulados del ejercicio
+superen las 300 UIT, el pago a cuenta se incrementa al 	o al coeficiente resultante del
+ejercicio anterior, lo que sea mayor.1
+Para la regularización anual, el RMT aplica una escala que beneficia a las empresas con
+menores utilidades. El cálculo se realiza sobre la renta neta imponible aplicando las siguientes
+tasas:
+1. Tramo Inicial: Por las primeras 15 UIT de utilidad neta (hasta 	), se aplica
+una tasa del 	.1
+2. Tramo Superior: Por el exceso de las 15 UIT de utilidad neta, la tasa asciende al 	,
+alineándose con la tasa del Régimen General.1
+La fórmula para calcular el impuesto anual ( 	) sobre una utilidad neta ( ) se expresa
+mediante la siguiente función:
+Esta progresividad es un beneficio sustancial para las MYPE, ya que permite que una parte
+significativa de las utilidades sea reinvertida con una carga fiscal reducida, fomentando la
+acumulación de capital de trabajo.1
+Condiciones de Permanencia y Transiciones de Régimen
+La normativa de la SUNAT es estricta respecto a los límites de permanencia. Si en el transcurso
+del año 2025 una empresa superó las 1,700 UIT de ingresos, para el ejercicio 2026 se encuentra
+obligada a tributar bajo el Régimen General por todo el año, perdiendo la posibilidad de
+retornar al RMT hasta que transcurra un ejercicio completo sin superar dichos límites.7 Esta
+disposición subraya la importancia de un monitoreo constante de los ingresos proyectados
+para evitar saltos imprevistos en la carga tributaria y en la complejidad contable.
+Asimismo, el acogimiento al RMT tiene ventanas temporales específicas. Si una empresa ya
+está operando y proviene del Régimen General, solo puede cambiarse al RMT con la
+declaración del mes de enero del año siguiente. Si proviene del Nuevo RUS o del RER, puede
+realizar el cambio en cualquier mes del año mediante la presentación de la declaración jurada
+mensual correspondiente, siempre que se efectúe dentro del plazo de vencimiento.9
+
+-- 3 of 15 --
+
+Obligaciones en el Impuesto General a las Ventas
+(IGV)
+El Impuesto General a las Ventas (IGV) grava el valor agregado de los bienes y servicios con
+una tasa del 	, la cual se descompone en un 	de IGV propiamente dicho y un 	del
+Impuesto de Promoción Municipal (IPM).11 Para las MYPE, el IGV representa a menudo una
+presión financiera sobre la liquidez, especialmente en operaciones de venta al crédito donde el
+impuesto debe pagarse antes de haber cobrado la factura.
+El Beneficio del IGV Justo
+Para mitigar este impacto, la legislación peruana contempla el beneficio del "IGV Justo". Este
+mecanismo permite a las micro y pequeñas empresas con ventas anuales de hasta 1,700 UIT
+prorrogar el pago del IGV de un periodo tributario hasta por tres meses. Es fundamental
+recalcar que este beneficio no exime de la obligación de declarar en las fechas previstas por el
+cronograma de la SUNAT; únicamente posterga el desembolso de dinero.4
+No todas las empresas pueden acceder a esta prórroga. Existen exclusiones claras para
+aquellas entidades con deudas en cobranza coactiva superiores a 1 UIT, o cuyos titulares o
+socios hayan sido condenados por delitos tributarios. Asimismo, la empresa debe haber
+cumplido con sus declaraciones y pagos de los últimos 12 meses para ser considerada
+elegible.4
+Tabla 2: Condiciones y Exclusiones para el IGV Justo
+Requisito 	Detalle del Cumplimiento
+Límite de Ventas 	No superar las 1,700 UIT anuales
+Deuda Coactiva No debe exceder 1 UIT ( 	en 2026)
+Historial Tributario 	Declaraciones de los últimos 12 periodos
+presentadas
+
+-- 4 of 15 --
+
+Condición de Socios 	Sin sentencias por delitos tributarios
+Procesos Judiciales 	No encontrarse en proceso concursal
+Fuente: Elaboración basada en.4
+Actualizaciones de Tasas para Sectores Específicos
+En el ejercicio 2026, las MYPE que operan en los sectores de restaurantes, hoteles y
+alojamientos turísticos deben prestar especial atención a la actualización de la tasa reducida de
+IGV. Aunque la tasa base del IGV para estos rubros se mantiene en el 	hasta finales de
+2026 para apoyar la recuperación del sector turismo, el componente del IPM aumenta de
+forma progresiva. De este modo, la tasa total para estos servicios en 2026 asciende al 	,
+resultado de la suma del 	de IGV y un 	de IPM.14
+Esta tasa preferencial es excluyente para las MYPE y no aplica al Régimen General, que
+continúa con el 	. Las empresas deben asegurarse de configurar correctamente sus
+sistemas de facturación electrónica para evitar inconsistencias en la declaración del Formulario
+Virtual 621, ya que declarar con una tasa errónea puede generar alertas de fiscalización.14
+Digitalización y Control: Facturación y Libros
+Electrónicos
+La SUNAT ha consolidado un ecosistema digital donde la trazabilidad de las operaciones es
+prácticamente instantánea. Para la empresa Cerezo, la adopción correcta de estas
+herramientas es indispensable para el cumplimiento normativo.
+Emisión de Comprobantes de Pago Electrónicos (CPE)
+Desde el año 2022, la emisión de comprobantes electrónicos es obligatoria para todas las
+empresas bajo el RMT y el Régimen General.18 El Comprobante de Pago Electrónico (CPE) tiene
+la misma validez legal que el físico, pero ofrece mayores garantías de autenticidad y facilita la
+contabilidad automatizada. El estándar utilizado en el Perú es el formato XML UBL 2.1, que
+incluye una firma digital del emisor.20
+Existen diversos sistemas para emitir CPE:
+1. Portal SUNAT (SEE - SOL): Una opción gratuita ideal para empresas con bajo volumen de
+
+-- 5 of 15 --
+
+transacciones.
+2. Sistemas del Contribuyente: Software propio o de terceros integrado con la SUNAT,
+adecuado para empresas con mayor volumen de ventas.22
+3. APP Emprender SUNAT: Permite emitir facturas y boletas desde dispositivos móviles de
+forma simplificada, facilitando las ventas en campo o ferias.23
+Las empresas tienen la obligación de almacenar y conservar estos documentos digitales por un
+periodo de cinco años, incluyendo las constancias de recepción (CDR) emitidas por la SUNAT,
+que validan la legalidad del comprobante.20
+El Sistema Integrado de Registros Electrónicos (SIRE)
+Una de las transformaciones más relevantes para 2026 es la plena vigencia del SIRE. Este
+sistema reemplaza al antiguo Programa de Libros Electrónicos (PLE) y al portal de libros
+tradicionales. El SIRE funciona mediante una "propuesta" que la SUNAT genera para el
+contribuyente, basada en los comprobantes de pago emitidos y recibidos electrónicamente. La
+empresa debe validar, complementar o reemplazar esta propuesta para generar su Registro de
+Ventas e Ingresos Electrónico (RVIE) y su Registro de Compras Electrónico (RCE).24
+El cronograma de obligatoriedad del SIRE se ha ajustado para 2026, otorgando plazos
+adicionales para los Principales Contribuyentes (PRICOS) según su nivel de ingresos de 2024:
+● PRICOS con ingresos hasta 2,300 UIT: Obligados desde enero 2026.24
+● PRICOS con ingresos superiores a 2,300 UIT: Obligados desde junio 2026.3
+Para el resto de empresas bajo el RMT, la SUNAT ha aplicado su facultad discrecional de no
+sancionar infracciones relacionadas con el SIRE (como retrasos u omisiones) hasta el 31 de
+enero de 2026 para los periodos de 2025, buscando facilitar la adaptación tecnológica sin
+cargar financieramente a los contribuyentes.26
+Obligaciones Contables y Tenencia de Libros
+La carga administrativa en el RMT es escalable. A medida que los ingresos de la empresa
+aumentan, la SUNAT exige un mayor nivel de detalle en sus registros contables para asegurar la
+transparencia de sus operaciones financieras.30
+Tabla 3: Libros y Registros Obligatorios según Ingresos Brutos (RMT)
+Tramo de Ingresos Anuales 	Libros Obligatorios
+
+-- 6 of 15 --
+
+Hasta 300 UIT 	Registro de Ventas, Registro de Compras, Libro
+Diario de Formato Simplificado
+Más de 300 a 500 UIT 	Registro de Ventas, Registro de Compras, Libro
+Diario, Libro Mayor
+Más de 500 a 1,700 UIT 	Registro de Ventas, Compras, Libro Diario,
+Mayor, Libro de Inventarios y Balances
+Superior a 1,700 UIT 	Contabilidad Completa (Caja, Activos Fijos,
+Costos, etc.)
+Fuente: Elaboración basada en.9
+Es vital recalcar que el incumplimiento en el llevado de estos libros, o su atraso más allá de los
+límites permitidos, constituye una infracción tipificada en el Código Tributario. El SIRE facilita
+esta labor al automatizar los registros de compras y ventas, pero los libros Diario y Mayor
+siguen siendo responsabilidad de la gestión interna de la empresa.12
+Cronograma de Obligaciones Tributarias 2026
+La puntualidad es un factor determinante para mantener un buen perfil de cumplimiento ante la
+SUNAT. Los vencimientos se rigen por el último dígito del RUC de la empresa.
+Vencimientos Mensuales
+Para el ejercicio 2026, el cronograma mensual de declaraciones y pagos para impuestos como
+el IGV, el Impuesto a la Renta (pagos a cuenta) y el ITF (Impuesto a las Transacciones
+Financieras) sigue la secuencia de días hábiles del mes siguiente al periodo devengado.34
+Tabla 4: Cronograma de Vencimientos Mensuales (Ejercicio 2026)
+Período
+Tributari
+o
+RUC 0 	RUC 1 	RUC 2 y
+3
+RUC 4 y
+5
+RUC 6 y
+7
+RUC 8 y
+9
+Buenos
+Contrib.
+
+-- 7 of 15 --
+
+Ene-202
+6
+16 Feb 	17 Feb 	18 Feb 	19 Feb 	20 Feb 	23 Feb 	24 Feb
+Feb-202
+6
+16 Mar 	17 Mar 	18 Mar 	19 Mar 	20 Mar 	23 Mar 	24 Mar
+Mar-202
+6
+17 Abr 	20 Abr 	21 Abr 	22 Abr 	23 Abr 	24 Abr 	27 Abr
+Abr-202
+6
+18 May 	19 May 	20 May 	21 May 	22 May 	25 May 	26 May
+May-202
+6
+15 Jun 	16 Jun 	17 Jun 	18 Jun 	19 Jun 	22 Jun 	23 Jun
+Jun-202
+6
+15 Jul 	16 Jul 	17 Jul 	20 Jul 	21 Jul 	22 Jul 	24 Jul
+Jul-2026 18 Ago 	19 Ago 	20 Ago 	21 Ago 	24 Ago 	25 Ago 	26 Ago
+Fuente: Elaboración basada en.34
+Declaración Jurada Anual del Impuesto a la Renta 2025
+Para el cierre del ejercicio 2025, cuya declaración se realiza en 2026, las MYPE bajo el régimen
+de la Ley N.º 31940 cuentan con un cronograma ampliado. Esto significa que las micro y
+pequeñas empresas que no superaron las 1,700 UIT en 2024 tienen una fecha de vencimiento
+posterior a la de las grandes empresas, brindándoles más tiempo para consolidar sus balances
+financieros.35
+Los vencimientos de la declaración anual 2025 para MYPE inician el 27 de mayo de 2026 para el
+dígito 0 y culminan el 10 de junio para los Buenos Contribuyentes. La información personalizada
+
+-- 8 of 15 --
+
+para estas declaraciones estará disponible en la plataforma de la SUNAT desde el 16 de febrero
+de 2026.35
+Beneficios Laborales y el Registro REMYPE
+La formalización tributaria es la puerta de entrada a la formalización laboral bajo esquemas de
+costos reducidos. Al inscribirse en el Registro Nacional de la Micro y Pequeña Empresa
+(REMYPE), Cerezo puede acogerse al Régimen Laboral Especial, diseñado para reducir las
+cargas no salariales mientras se garantizan derechos básicos para los trabajadores.39
+Diferenciación de Costos Laborales
+El régimen varía si la empresa es calificada como Micro o Pequeña Empresa según sus ventas.
+En la microempresa, beneficios como la Compensación por Tiempo de Servicios (CTS) y las
+gratificaciones no son obligatorios, mientras que en la pequeña empresa se pagan al 	de
+lo que dicta el régimen general.39
+Tabla 5: Comparativa de Beneficios Sociales (Régimen Especial MYPE)
+Beneficio Laboral 	Microempresa (<150 UIT) 	Pequeña Empresa (<1,700
+UIT)
+Remuneración Mínima 	RMV vigente 	RMV vigente
+Jornada Laboral 	8 horas diarias / 48
+semanales
+8 horas diarias / 48 semanales
+Vacaciones 	15 días calendario 	15 días calendario
+Gratificaciones 	No obligatorio 	2 gratificaciones al año (50%
+sueldo)
+CTS 	No obligatorio 	15 días de sueldo por año
+
+-- 9 of 15 --
+
+Indemnización Despido 	10 días por año (tope 90) 	20 días por año (tope 120)
+Salud 	SIS (Subsidiado al 50% por
+Estado)
+ESSALUD (9% a cargo del
+empleador)
+Pensiones 	Opcional 	Obligatorio
+Fuente: Elaboración basada en.39
+Esta estructura permite que Cerezo sea competitiva en costos operativos, facilitando la
+contratación de personal formal y el acceso a seguros de salud para sus trabajadores y
+conductores de microempresa a través del Seguro Integral de Salud (SIS).40
+Régimen de Infracciones, Multas y Gradualidad
+El temor a las multas es una de las principales barreras para la formalización. Sin embargo, la
+SUNAT aplica una facultad discrecional y regímenes de gradualidad que permiten corregir
+errores con rebajas sustanciales, e incluso con la eliminación total de la multa en ciertos
+supuestos para las MYPE.
+Rebajas en Multas por Omisión (Art. 176 Num. 1)
+La infracción más recurrente es no presentar la declaración mensual dentro del plazo. Para
+contribuyentes del RMT con ingresos netos de hasta 150 UIT, existe la posibilidad de una rebaja
+del 	de la multa si se subsana voluntariamente antes de que la SUNAT notifique la
+infracción.41
+Para empresas con ingresos mayores pero hasta 1,700 UIT, la gradualidad opera bajo criterios
+de subsanación y pago:
+● Subsanación Voluntaria (sin pago): 	de rebaja.41
+● Subsanación Voluntaria (con pago): 	de rebaja.41
+● Subsanación Inducida (tras notificación): La rebaja cae al 	o 	dependiendo
+de si se realiza el pago de la multa rebajada en el plazo otorgado.41
+Acompañamiento Tributario para Nuevos Contribuyentes
+
+-- 10 of 15 --
+
+Un beneficio exclusivo para quienes recién inician actividades o provienen del Nuevo RUS es el
+programa de acompañamiento tributario. Durante el primer ciclo de vida como contribuyentes,
+la SUNAT puede optar por no aplicar multas pecuniarias ante las primeras infracciones
+detectadas, sustituyéndolas por cursos de capacitación obligatorios.45 Para gozar de este
+beneficio, el contribuyente debe completar satisfactoriamente el curso y aprobar la evaluación
+final dentro de los 5 días de haber sido notificado en su buzón electrónico.46
+Estrategias de Optimización Fiscal para Cerezo
+Basándose en la normativa vigente para 2026, se recomiendan las siguientes acciones
+estratégicas para la empresa Cerezo:
+1. Aprovechamiento de la Factura Negociable: Cerezo debe asegurarse de que su
+sistema de facturación electrónica genere la "Factura Negociable". Este documento digital
+funciona como un título valor que puede ser transferido a entidades financieras
+(factoring) para obtener liquidez inmediata sobre sus cuentas por cobrar, una herramienta
+vital si el capital de trabajo es limitado.19
+2. Reinversión de Utilidades: Bajo la Ley N.º 31969, los sujetos que reinviertan sus utilidades
+después del pago del impuesto a la renta tienen derecho a un crédito tributario del
+del monto reinvertido durante los ejercicios hasta 2028. Esta es una oportunidad
+excepcional para que Cerezo modernice su infraestructura con un escudo fiscal.2
+3. Deducción Adicional de Gastos de Capacitación: La empresa puede deducir como
+crédito tributario los gastos invertidos en capacitar a su personal, siempre que no excedan
+el 	de su planilla anual. Esto no solo mejora la productividad, sino que reduce
+directamente el Impuesto a la Renta a pagar.2
+4. Gestión de la Liquidez vía IGV Justo: Si Cerezo enfrenta meses de baja recaudación de
+efectivo por ventas al crédito, debe utilizar la opción de prórroga del IGV en su
+declaración mensual. No obstante, es crítico pagar el impuesto prorrogado antes de los
+90 días para evitar que los intereses moratorios neutralicen el beneficio.4
+5. Verificación de Tasas Sectoriales: Si la actividad de Cerezo se expande hacia el rubro de
+servicios de alimentación o alojamiento, debe ajustar su facturación al 	en 2026
+para cumplir con el aumento progresivo del IPM, evitando que la SUNAT considere la
+diferencia como una omisión de ingresos gravados.14
+El éxito de la empresa Cerezo en el entorno fiscal peruano de 2026 dependerá de su capacidad
+para integrar estas herramientas digitales y normativas en su gestión diaria. El Régimen MYPE
+Tributario ofrece un camino claro para el crecimiento ordenado, siempre que se respete el
+cronograma de vencimientos y se utilicen activamente los beneficios de postergación y
+gradualidad que la ley otorga para fomentar la competitividad del sector empresarial nacional.
+Obras citadas
+
+-- 11 of 15 --
+
+1. Régimen MYPE Tributario - RMT - Orientación, fecha de acceso: abril 14, 2026,
+https://www.gob.pe/6990-regimen-mype-tributario-rmt
+2. Cambios tributarios a tener en cuenta en el 2026 - Blog - Editorial Economía y
+Finanzas, fecha de acceso: abril 14, 2026,
+https://eef.com.pe/site/blog/cambios-tributarios-a-tener-en-cuenta-en-el-2026
+3. SE POSTERGA EL USO DEL SIRE PARA LOS PRICOS | TRIBUTAFACIL - YouTube,
+fecha de acceso: abril 14, 2026, https://www.youtube.com/watch?v=yTrcCeob-qs
+4. IGV Justo - Orientación - Superintendencia Nacional de Aduanas y ..., fecha de
+acceso: abril 14, 2026, https://www.gob.pe/23606-igv-justo
+5. IGV Justo - Emprender SUNAT, fecha de acceso: abril 14, 2026,
+https://emprender.sunat.gob.pe/principales-impuestos/impuesto-general-las-ven
+tas-igv/igv-justo
+6. Registro de la Micro y Pequeña Empresa (REMYPE) - Trámite, fecha de acceso:
+abril 14, 2026,
+https://www.gob.pe/279-registro-de-la-micro-y-pequena-empresa-remype
+7. SUNAT ME CAMBIA DE REGIMEN TRIBUTARIO 2026 | TRIBUTAFACIL - YouTube,
+fecha de acceso: abril 14, 2026, https://www.youtube.com/watch?v=x8lruJr-Ew0
+8. ¿Cuáles son los regímenes tributarios y en qué se diferencian? - Actualidad
+Empresarial, fecha de acceso: abril 14, 2026,
+https://actualidadempresarial.pe/noticia/cuales-son-los-regimenes-tributarios-y-
+en-que-se-diferencian/0c834d81-a1d0-43c4-95d9-c05a97523d2b/1
+9. Régimen MYPE Tributario - Emprender SUNAT, fecha de acceso: abril 14, 2026,
+https://emprender.sunat.gob.pe/ruc/regimenes-tributarios-mype/regimen-mype-
+tributario
+10. ¿Cómo formalizar tu negocio? - Sunat, fecha de acceso: abril 14, 2026,
+https://orientacion.sunat.gob.pe/sites/default/files/inline-files/cartilla_formalizacio
+n_2020_PORTAL.pdf
+11. Regímenes Tributarios - Emprender SUNAT, fecha de acceso: abril 14, 2026,
+https://emprender.sunat.gob.pe/ruc/regimenes-tributarios-mype/regimenes-tribu
+tarios
+12. Cronograma fiscal para empresas en Perú en 2026: fechas y obligaciones - BBVA,
+fecha de acceso: abril 14, 2026,
+https://www.bbva.com/es/pe/empresas/cronograma-fiscal-para-empresas-en-pe
+ru-en-2026-fechas-y-obligaciones/
+13. Beneficio del IGV Justo para MYPES - MISHA, fecha de acceso: abril 14, 2026,
+https://misha.pe/tributario/igv-justo-para-mypes/
+14. Nueva tasa de IGV e IPM 2026 para MYPES de restaurantes y hoteles en Perú -
+NubeFacT, fecha de acceso: abril 14, 2026,
+https://www.nubefact.com/blog/actualizaciones-sunat/nueva-tasa-de-igv-e-ipm-
+2026-para-mypes-de-restaurantes-y-hoteles-en-peru
+15. Nueva Tasa de IGV 10.5% para Restaurantes en 2026: ¿Qué Debes Saber y Cómo
+Prepararte? - Mifact - Sistema de Facturación Electrónica, fecha de acceso: abril
+14, 2026,
+https://mifact.net/nueva-tasa-de-igv-10-5-para-restaurantes-en-2026-que-debe
+s-saber-y-como-prepararte/
+
+-- 12 of 15 --
+
+16. IGV 10.5% en 2026: nueva tasa para restaurantes, hoteles y alojamientos
+turísticos, fecha de acceso: abril 14, 2026,
+https://blog.quesito.pe/facturacion-electronica/igv-10-5-en-2026-nueva-tasa-pa
+ra-restaurantes-hoteles-y-alojamientos-turisticos
+17. Tasa reducida de IGV para restaurantes, hoteles y alojamientos turísticos - Perú
+Contable, fecha de acceso: abril 14, 2026,
+https://www.perucontable.com/tributaria/tasa-reducida-de-igv-para-restaurante
+s-hoteles-y-alojamientos-turisticos/
+18. fecha de acceso: abril 14, 2026,
+https://edicomgroup.com/es/blog/como-es-la-factura-electronica-peru#:~:text=L
+a%20medida%20ser%C3%A1%20obligat%C3%B3ria%20a%20partir%20del%201
+%20de%20agosto%20de%202026.&text=La%20factura%20electr%C3%B3nica%
+20en%20Per%C3%BA,de%20Administraci%C3%B3n%20Tribut%C3%A1ria%20(S
+UNAT).
+19. La Transformación Digital en la Emisión de Comprobantes de Pago para las
+Mypes en Perú, fecha de acceso: abril 14, 2026,
+https://innova-funding.com/comprobantes-electronicos-obligatorios-desde-juni
+o2022/
+20. Factura electrónica en Perú: cómo emitir CPE y cumplir con los requisitos de la
+SUNAT, fecha de acceso: abril 14, 2026,
+https://edicomgroup.com/es/blog/como-es-la-factura-electronica-peru
+21. Facturación Electrónica SUNAT: Guía Completa Perú 2026, fecha de acceso: abril
+14, 2026, https://igeaerp.com/guia-facturacion-electronica-sunat-peru.php
+22. ¿Quiénes están obligados a emitir comprobantes de pago electrónicos? - Cpe
+Sunat, fecha de acceso: abril 14, 2026,
+https://cpe.sunat.gob.pe/informacion_general/obligados_cpe
+23. app - Emprender SUNAT, fecha de acceso: abril 14, 2026,
+https://emprender.sunat.gob.pe/acciones-contribuyente/formalizacion/app-empr
+ender
+24. Sistema Integrado de Registros Electrónicos - SIRE - Informes y publicaciones -
+Superintendencia Nacional de Aduanas y de Administración Tributaria -
+Plataforma del Estado Peruano, fecha de acceso: abril 14, 2026,
+https://www.gob.pe/institucion/sunat/informes-publicaciones/4445314-sistema-i
+ntegrado-de-registros-electronicos-sire
+25. SUNAT posterga el uso del SIRE hasta enero 2026 - Mifact - Sistema de
+Facturación Electrónica, fecha de acceso: abril 14, 2026,
+https://mifact.net/nueva-obligacion-sire-sunat-desde-abril-2024/
+26. ¿Cuál es el cronograma oficial del SIRE 2025 y 2026 tras la nueva postergación de
+SUNAT? - Seminarios Top, fecha de acceso: abril 14, 2026,
+https://seminariostop.com/blog/sire-2025-cronograma-obligados-sunat/
+27. Se extiende el plazo para el uso del SIRE en Perú - SERES Blog, fecha de acceso:
+abril 14, 2026,
+https://blog.groupseres.com/latam/nuevas-fechas-para-cumplir-con-el-sire
+28. SUNAT amplía plazo del SIRE sin sanciones hasta junio de 2026 - Mifact, fecha de
+acceso: abril 14, 2026,
+
+-- 13 of 15 --
+
+https://mifact.net/sunat-amplia-plazo-del-sire-sin-sanciones-hasta-junio-de-202
+6/
+29. SUNAT posterga sanciones por SIRE hasta 2026 y digitalización fiscal no despega:
+¿modernización tributaria real o solo más burocracia? - Infobae, fecha de acceso:
+abril 14, 2026,
+https://www.infobae.com/peru/2025/08/06/sunat-posterga-sanciones-por-sire-h
+asta-2026-y-digitalizacion-fiscal-no-despega-modernizacion-tributaria-real-o-s
+olo-mas-burocracia/
+30. Llevar libros contables para mi negocio - Orientación - Superintendencia Nacional
+de Aduanas y de Administración Tributaria - Plataforma del Estado Peruano,
+fecha de acceso: abril 14, 2026,
+https://www.gob.pe/1211-llevar-libros-contables-para-mi-negocio
+31. ¿cuáles son los libros y registro contables obligatorios que debes tener en
+cuenta? - Inicio, fecha de acceso: abril 14, 2026,
+https://centrodecapacitacion.acaprendizajecontable.com/posts/cuales-son-los-li
+bros-y-registro-contables-obligatorios-que-debes-tener-en-cuenta
+32. Libros y registros contables obligatorios - Emprender SUNAT, fecha de acceso:
+abril 14, 2026,
+https://emprender.sunat.gob.pe/comprobantes-libros/registros-libros-electronico
+s/libros-registros-contables-obligatorios
+33. ¿Qué libros contables debo llevar según mi régimen tributario? - | MYPES.pe,
+fecha de acceso: abril 14, 2026,
+https://mypes.pe/noticias/que-libros-contables-debo-llevar-segun-mi-regimen-t
+ributario
+34. Cronograma de Obligaciones Mensuales 2026 - Calendario de Vencimientos -
+Personas, fecha de acceso: abril 14, 2026,
+https://www.sunat.gob.pe/orientacion/cronogramas/2026/cObligacionMensual20
+26.html
+35. Cronograma de Vencimiento Impuesto a la Renta Ejercicio 2022 - SUNAT, fecha
+de acceso: abril 14, 2026,
+https://www.sunat.gob.pe/orientacion/cronogramas/2026/cRenta2025.html
+36. Cronograma de declaración jurada anual: Las fechas límite del impuesto a la renta
+en Sunat - Infobae, fecha de acceso: abril 14, 2026,
+https://www.infobae.com/peru/2026/01/29/cronograma-de-declaracion-jurada-a
+nual-2025-de-sunat-las-fechas-de-pago-del-impuesto-a-la-renta/
+37. Establecen cronograma general para la declaración jurada anual del Impuesto a la
+Renta y del Impuesto a las Transacciones Financieras y para las personas
+naturales y Micro y Pequeñas Empresas (MYPE) comprendidas dentro de los
+alcances de la Ley N° 31940 correspondiente al ejercicio gravable 2025, y otros |
+Actualidad Empresarial, fecha de acceso: abril 14, 2026,
+https://actualidadempresarial.pe/comentario-legal/establecen-cronograma-gene
+ral-para-la-declaracion-jurada-anual-del-impuesto-a-la-renta-y-del-impuesto-a
+-las-transacciones-financieras-y-para-las-personas-naturales-y-micro-y-peque
+nas-empresas-mype-comprendidas-dentro-de-los-alcances-de-la-ley-n0-3194
+0-cor/1
+
+-- 14 of 15 --
+
+38. Cronograma de Declaración - Renta Anual 2025 - Formulario N° 709, fecha de
+acceso: abril 14, 2026,
+https://renta.sunat.gob.pe/personas/cronograma-de-declaracion-renta-anual-20
+25-formulario-ndeg-709
+39. régimen laboral MYPE - MYPES, fecha de acceso: abril 14, 2026,
+https://www.sunat.gob.pe/orientacion/mypes/regimenLaboral.html
+40. Beneficios de ser formal - Emprender SUNAT, fecha de acceso: abril 14, 2026,
+https://emprender.sunat.gob.pe/acciones-contribuyente/formalizacion/beneficios
+-ser-formal
+41. Régimen de gradualidad aplicable a las principales infracciones sancionadas por
+SUNAT, fecha de acceso: abril 14, 2026,
+https://www.mef.gob.pe/defensoria/boletines/Exp_defensoria_06052022.pdf
+42. Régimen de Gradualidad para la multa por no presentar las declaraciones en la
+fecha de vencimiento, fecha de acceso: abril 14, 2026,
+https://www.gob.pe/80822-regimen-de-gradualidad-para-la-multa-por-no-pres
+entar-las-declaraciones-en-la-fecha-de-vencimiento
+43. Nueva gradualidad de multas por omisión de declaraciones del Impuesto a la
+Renta: ajustes al artículo 176 del Código Tributario - Arizmendi Perú, fecha de
+acceso: abril 14, 2026,
+https://arizmendi.pe/nueva-gradualidad-de-multas-por-omision-de-declaracione
+s-del-impuesto-a-la-renta-ajustes-al-articulo-176-del-codigo-tributario/
+44. Régimen de Gradualidad - Emprender SUNAT, fecha de acceso: abril 14, 2026,
+https://emprender.sunat.gob.pe/acciones-sunat/facultad-sancionadora/regimen-
+gradualidad
+45. Impacto tributario del régimen MYPE tributario (RMT) en el sector textil Gamarra
+en el ejercicio 2017 - Repositorio Academico UPC, fecha de acceso: abril 14, 2026,
+https://repositorioacademico.upc.edu.pe/bitstream/handle/10757/623555/Valenzu
+ela_CY.pdf?sequence=1
+46. ES OFICIA: SUNAT ELIMINA TUS PRIMERAS MULTAS EN 2026 | TRIBUTAFACIL,
+fecha de acceso: abril 14, 2026, https://www.youtube.com/watch?v=ex-CMGitXL4
+
+-- 15 of 15 --
+
