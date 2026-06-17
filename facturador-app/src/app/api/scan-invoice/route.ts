@@ -64,29 +64,23 @@ function extractData(rawText: string): any {
     }
 
     // === AMOUNTS ===
-    const base = findAmountAfter(norm, /Total\s+por\s+honorarios\s*:?/i);
-    if (base !== null) data.baseAmount = base;
-
-    const ir = findAmountAfter(norm, /Retenci[oó]n.*?(?:IR|%)\s*:?/i) || findAmountAfter(norm, /%\)\s*IR:\s*8/i);
-    if (ir !== null) data.irRetentionAmount = ir;
-    else {
-        const irFallback = norm.match(/%\)\s*IR:?\s*8?\s*\(?([\d,]+\.\d{2})\)?/i);
-        if (irFallback) data.irRetentionAmount = parseMoney(irFallback[1]);
-    }
-
-    const total = findAmountAfter(norm, /Total\s+Neto\s+Recibido\s*:?/i) || findAmountAfter(norm, /Neto\s+Recibido.*?(?:SOLES|DOLARES)\s*:?/i);
-    if (total !== null) data.totalAmount = total;
-    else {
-        const amountsMatch = norm.match(/([\d,]+\.\d{2})\s+\(?([\d,]+\.\d{2})\)?\s+([\d,]+\.\d{2})\s+(?:SOLES|D[OÓ]LARES)/i);
-        if (amountsMatch) {
-            if (data.baseAmount == null) data.baseAmount = parseMoney(amountsMatch[1]);
-            if (data.irRetentionAmount == null) data.irRetentionAmount = parseMoney(amountsMatch[2]);
-            if (data.totalAmount == null) data.totalAmount = parseMoney(amountsMatch[3]);
+    // unpdf extracts PDF text in stream order, so labels and values end up separated.
+    // SUNAT recibos always render the amount table as: BASE (RETENTION) NET SOLES — match it positionally.
+    const amountBlockMatch = norm.match(
+        /([\d]{1,3}(?:,[\d]{3})*\.[\d]{2})\s+\(([\d]{1,3}(?:,[\d]{3})*\.[\d]{2})\)\s+([\d]{1,3}(?:,[\d]{3})*\.[\d]{2})\s+(?:SOLES|D[OÓ]LARES)/i
+    );
+    if (amountBlockMatch) {
+        data.baseAmount = parseMoney(amountBlockMatch[1]);
+        data.irRetentionAmount = parseMoney(amountBlockMatch[2]);
+        data.totalAmount = parseMoney(amountBlockMatch[3]);
+    } else {
+        const base = findAmountAfter(norm, /Total\s+por\s+honorarios\s*:?/i);
+        if (base !== null) data.baseAmount = base;
+        const total = findAmountAfter(norm, /Total\s+Neto\s+Recibido\s*:?/i);
+        if (total !== null) data.totalAmount = total;
+        if ((data.totalAmount == null || data.totalAmount === 0) && data.baseAmount != null) {
+            data.totalAmount = data.baseAmount;
         }
-    }
-
-    if ((data.totalAmount == null || data.totalAmount === 0) && data.baseAmount != null) {
-        data.totalAmount = data.baseAmount - (data.irRetentionAmount || 0);
     }
 
     // === CONCEPT AND DATE ===
