@@ -3,6 +3,7 @@
 import {
   ExpenseCategory,
   ExpenseDocumentType,
+  ExpenseRecord,
   PaymentMethod,
   ExpenseStatus,
 } from '@/lib/accounting-types';
@@ -93,6 +94,8 @@ type ExpenseFormState = {
   operationNumber: string;
   category: ExpenseCategory;
   notes: string;
+  clientId: string;
+  alreadyPaid: boolean;
 };
 
 const INITIAL_FORM: ExpenseFormState = {
@@ -112,6 +115,17 @@ const INITIAL_FORM: ExpenseFormState = {
   operationNumber: '',
   category: 'servicios',
   notes: '',
+  clientId: '',
+  alreadyPaid: false,
+};
+
+// Métodos de pago que implican pago inmediato: el egreso nace pagado (P6)
+const AUTO_PAID_METHODS: PaymentMethod[] = ['efectivo', 'tarjeta', 'yape_plin'];
+
+// P5: conceptos sospechosos — solo dígitos/símbolos o demasiado cortos
+const isSuspiciousConcept = (concept: string) => {
+  const t = (concept ?? '').trim();
+  return t.length < 10 || /^[\d\s.,\-/#]+$/.test(t);
 };
 
 const getInitials = (name: string) => {
@@ -185,6 +199,7 @@ export default function EgresosPage() {
     syncError,
     insertExpense,
     insertExpenseFromXML,
+    updateExpense,
     markExpensePaid,
     revertExpensePayment,
     deleteExpense,
@@ -198,6 +213,8 @@ export default function EgresosPage() {
   const [monthFilter, setMonthFilter] = useState('todos');
   const [busyExpenseId, setBusyExpenseId] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingExpenseId, setEditingExpenseId] = useState<string | null>(null);
+  const [showDirtyPanel, setShowDirtyPanel] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
   const [isUploadingXML, setIsUploadingXML] = useState(false);
   const [xmlUploadError, setXmlUploadError] = useState<string | null>(null);
@@ -345,6 +362,94 @@ export default function EgresosPage() {
 
   const monthOptions = useMemo(() => buildMonthOptions(expenses), [expenses]);
 
+  const clientOptions = useMemo(
+    () =>
+      partners
+        .filter((p) => p.role === 'cliente' || p.role === 'ambos')
+        .map((p) => ({ id: p.id, name: p.name })),
+    [partners],
+  );
+
+  // P5: categoría dominante por proveedor (para detectar inconsistencias y precargar)
+  const dominantCategoryByProvider = useMemo(() => {
+    const counts = new Map<string, Map<ExpenseCategory, number>>();
+    for (const e of expenses) {
+      const inner = counts.get(e.providerName) ?? new Map<ExpenseCategory, number>();
+      inner.set(e.category, (inner.get(e.category) ?? 0) + 1);
+      counts.set(e.providerName, inner);
+    }
+    const result = new Map<string, { category: ExpenseCategory; count: number; total: number }>();
+    for (const [provider, inner] of counts) {
+      let best: ExpenseCategory | null = null;
+      let bestCount = 0;
+      let total = 0;
+      for (const [cat, n] of inner) {
+        total += n;
+        if (n > bestCount) {
+          best = cat;
+          bestCount = n;
+        }
+      }
+      if (best) result.set(provider, { category: best, count: bestCount, total });
+    }
+    return result;
+  }, [expenses]);
+
+  // P5: egresos con datos por limpiar
+  const dirtyExpenses = useMemo(() => {
+    return expenses
+      .map((e) => {
+        const reasons: string[] = [];
+        if (isSuspiciousConcept(e.concept)) reasons.push('Concepto poco descriptivo');
+        const dominant = dominantCategoryByProvider.get(e.providerName);
+        if (dominant && dominant.total >= 3 && e.category !== dominant.category) {
+          reasons.push(`Categoría "${e.category}" difiere del histórico ("${dominant.category}")`);
+        }
+        return { expense: e, reasons };
+      })
+      .filter((item) => item.reasons.length > 0);
+  }, [expenses, dominantCategoryByProvider]);
+
+  const lastCategoryForProvider = (name: string): ExpenseCategory | null => {
+    const match = expenses
+      .filter((e) => e.providerName === name)
+      .sort((a, b) => b.issueDate.localeCompare(a.issueDate));
+    return match[0]?.category ?? null;
+  };
+
+  const openCreateModal = () => {
+    setForm(INITIAL_FORM);
+    setEditingExpenseId(null);
+    setFormError(null);
+    setIsModalOpen(true);
+  };
+
+  const handleEditExpense = (expense: ExpenseRecord) => {
+    setForm({
+      documentType: expense.documentType,
+      documentSeries: expense.documentSeries ?? '',
+      documentNumber: expense.documentNumber,
+      issueDate: expense.issueDate.slice(0, 10),
+      dueDate: expense.dueDate ? expense.dueDate.slice(0, 10) : '',
+      providerName: expense.providerName,
+      providerDocument: expense.providerDocument ?? '',
+      concept: expense.concept,
+      baseAmount: String(expense.baseAmount),
+      igvAmount: String(expense.igvAmount),
+      irRetention: expense.irRetention ? String(expense.irRetention) : '',
+      otherTaxes: expense.otherTaxes ? String(expense.otherTaxes) : '',
+      paymentMethod: expense.paymentMethod ?? 'transferencia',
+      operationNumber: expense.operationNumber ?? '',
+      category: expense.category,
+      notes: expense.notes ?? '',
+      clientId: expense.clientId ?? '',
+      alreadyPaid: expense.status === 'pagado',
+    });
+    setEditingExpenseId(expense.id);
+    setFormError(null);
+    setIsModalOpen(true);
+  };
+
   const monthScopedExpenses = useMemo(
     () => filterByMonth(expenses, monthFilter),
     [expenses, monthFilter],
@@ -406,13 +511,20 @@ export default function EgresosPage() {
       setFormError('Completa número, proveedor, fecha y monto base.');
       return;
     }
+    if (isSuspiciousConcept(form.concept)) {
+      setFormError(
+        'El concepto debe describir el gasto: mínimo 10 caracteres y no puede ser solo números.',
+      );
+      return;
+    }
     setIsSaving(true);
     const base = Number(form.baseAmount) || 0;
     const igv = form.igvAmount ? Number(form.igvAmount) : Number((base * 0.18).toFixed(2));
     const ir = Number(form.irRetention) || 0;
     const other = Number(form.otherTaxes) || 0;
     const total = base + igv + other - ir;
-    const result = await insertExpense({
+    const selectedClient = partners.find((p) => p.id === form.clientId);
+    const payload = {
       documentType: form.documentType,
       documentSeries: form.documentSeries || null,
       documentNumber: form.documentNumber,
@@ -420,25 +532,31 @@ export default function EgresosPage() {
       dueDate: form.dueDate || form.issueDate,
       providerName: form.providerName,
       providerDocument: form.providerDocument || null,
-      concept: form.concept || form.documentNumber,
+      concept: form.concept.trim(),
       paymentMethod: form.paymentMethod,
       operationNumber: form.operationNumber || null,
-      paymentDate: null,
+      paymentDate: form.alreadyPaid ? form.issueDate : null,
       baseAmount: base,
       igvAmount: igv,
       irRetention: ir,
       otherTaxes: other,
       totalAmount: total,
       category: form.category,
-      status: 'pendiente',
-      paidAmount: 0,
+      status: (form.alreadyPaid ? 'pagado' : 'pendiente') as ExpenseStatus,
+      paidAmount: form.alreadyPaid ? total : 0,
       notes: form.notes || null,
-    });
+      clientId: form.clientId || null,
+      clientName: selectedClient?.name ?? null,
+    };
+    const result = editingExpenseId
+      ? await updateExpense(editingExpenseId, payload)
+      : await insertExpense(payload);
     if (result.error) {
       setFormError(result.error);
     } else {
       setFormError(null);
       setForm(INITIAL_FORM);
+      setEditingExpenseId(null);
       setIsModalOpen(false);
     }
     setIsSaving(false);
@@ -534,7 +652,7 @@ export default function EgresosPage() {
                   </>
                 )}
               </button>
-              <button onClick={() => setIsModalOpen(true)} className="flex items-center gap-2 px-4 py-2 text-sm font-medium bg-slate-900 text-white rounded-lg hover:bg-slate-800">
+              <button onClick={openCreateModal} className="flex items-center gap-2 px-4 py-2 text-sm font-medium bg-slate-900 text-white rounded-lg hover:bg-slate-800">
                 <Plus className="w-4 h-4" />
                 Registrar Egreso
               </button>
@@ -552,6 +670,53 @@ export default function EgresosPage() {
           <p className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
             {formError}
           </p>
+        )}
+
+        {dirtyExpenses.length > 0 && (
+          <section className="rounded-xl border border-amber-200 bg-amber-50 shadow-sm">
+            <button
+              type="button"
+              onClick={() => setShowDirtyPanel((prev) => !prev)}
+              className="flex w-full items-center justify-between px-4 py-3 text-left"
+            >
+              <span className="flex items-center gap-2 text-sm font-semibold text-amber-800">
+                <AlertCircle className="h-4 w-4" />
+                Datos por limpiar: {dirtyExpenses.length} egreso{dirtyExpenses.length > 1 ? 's' : ''} con
+                concepto o categoría sospechosa
+              </span>
+              <span className="text-xs font-medium text-amber-700">
+                {showDirtyPanel ? 'Ocultar' : 'Revisar'}
+              </span>
+            </button>
+            {showDirtyPanel && (
+              <ul className="divide-y divide-amber-100 border-t border-amber-200">
+                {dirtyExpenses.slice(0, 20).map(({ expense, reasons }) => (
+                  <li key={expense.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-slate-800">
+                        {expense.documentNumber} · {expense.providerName}
+                      </p>
+                      <p className="truncate text-xs text-slate-600">
+                        “{expense.concept}” — {reasons.join(' · ')}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleEditExpense(expense)}
+                      className="rounded-lg bg-white px-3 py-1.5 text-xs font-semibold text-amber-800 ring-1 ring-amber-300 hover:bg-amber-100"
+                    >
+                      Corregir
+                    </button>
+                  </li>
+                ))}
+                {dirtyExpenses.length > 20 && (
+                  <li className="px-4 py-2 text-xs text-amber-700">
+                    …y {dirtyExpenses.length - 20} más. Corrige estos primero.
+                  </li>
+                )}
+              </ul>
+            )}
+          </section>
         )}
 
         <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -676,7 +841,14 @@ export default function EgresosPage() {
                           </td>
                           <td className="px-4 py-4 max-w-xs">
                             <p className="text-slate-700 text-sm truncate" title={expense.concept}>{expense.concept}</p>
-                            <p className="text-slate-500 text-xs">{expense.category}</p>
+                            <p className="text-slate-500 text-xs">
+                              {expense.category}
+                              {expense.clientName && (
+                                <span className="ml-2 inline-flex items-center rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-medium text-indigo-700">
+                                  {shortenName(expense.clientName, 24)}
+                                </span>
+                              )}
+                            </p>
                           </td>
                           <td className="px-4 py-4 text-right whitespace-nowrap">
                             <span className="text-slate-900 font-semibold">{formatCurrency(expense.totalAmount)}</span>
@@ -686,7 +858,14 @@ export default function EgresosPage() {
                           </td>
                           <td className="px-4 py-4 text-right whitespace-nowrap">
                             <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-
+                              <button
+                                onClick={() => handleEditExpense(expense)}
+                                disabled={busyExpenseId === expense.id}
+                                className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                                title="Editar / asignar cliente"
+                              >
+                                <Edit2 className="w-4 h-4" />
+                              </button>
                               {expense.status !== 'pagado' ? (
                                 <button onClick={() => handleMarkPaid(expense.id)} disabled={busyExpenseId === expense.id} className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold transition-colors">
                                   Marcar pagado
@@ -716,8 +895,15 @@ export default function EgresosPage() {
           </div>
         </section>
       </div>
-      <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title="Registrar Egreso">
-        <div className="rounded-xl bg-slate-900 p-4 text-slate-50">
+      <Modal
+        isOpen={isModalOpen}
+        onClose={() => {
+          setIsModalOpen(false);
+          setEditingExpenseId(null);
+        }}
+        title={editingExpenseId ? 'Editar Egreso' : 'Registrar Egreso'}
+      >
+        <div className={`rounded-xl bg-slate-900 p-4 text-slate-50 ${editingExpenseId ? 'hidden' : ''}`}>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <p className="text-sm font-semibold uppercase tracking-wide text-slate-300">
@@ -819,10 +1005,12 @@ export default function EgresosPage() {
                 const match = partners.find(
                   (partner) => partner.name === name || partner.tradeName === name,
                 );
+                const lastCategory = editingExpenseId ? null : lastCategoryForProvider(name);
                 setForm((prev) => ({
                   ...prev,
                   providerName: name,
                   providerDocument: match?.documentNumber ?? prev.providerDocument,
+                  category: lastCategory ?? prev.category,
                 }));
               }}
               placeholder="Nombre o razón social"
@@ -856,9 +1044,26 @@ export default function EgresosPage() {
             <input
               value={form.concept}
               onChange={(event) => setForm((prev) => ({ ...prev, concept: event.target.value }))}
-              placeholder="Descripción del servicio o producto"
+              placeholder="Descripción del servicio o producto (mín. 10 caracteres)"
+              minLength={10}
+              required
               className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none"
             />
+          </label>
+          <label className="text-sm font-medium text-slate-600">
+            Cliente / Proyecto (opcional — habilita margen por cliente)
+            <select
+              value={form.clientId}
+              onChange={(event) => setForm((prev) => ({ ...prev, clientId: event.target.value }))}
+              className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-blue-500"
+            >
+              <option value="">— Sin asignar —</option>
+              {clientOptions.map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.name}
+                </option>
+              ))}
+            </select>
           </label>
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="text-sm font-medium text-slate-600">
@@ -918,9 +1123,16 @@ export default function EgresosPage() {
             Método de pago
             <select
               value={form.paymentMethod}
-              onChange={(event) =>
-                setForm((prev) => ({ ...prev, paymentMethod: event.target.value as PaymentMethod }))
-              }
+              onChange={(event) => {
+                const method = event.target.value as PaymentMethod;
+                setForm((prev) => ({
+                  ...prev,
+                  paymentMethod: method,
+                  alreadyPaid: editingExpenseId
+                    ? prev.alreadyPaid
+                    : AUTO_PAID_METHODS.includes(method),
+                }));
+              }}
               className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none"
             >
               {PAYMENT_OPTIONS.map((option) => (
@@ -929,6 +1141,22 @@ export default function EgresosPage() {
                 </option>
               ))}
             </select>
+          </label>
+          <label className="flex items-center gap-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-sm font-medium text-slate-700">
+            <input
+              type="checkbox"
+              checked={form.alreadyPaid}
+              onChange={(event) =>
+                setForm((prev) => ({ ...prev, alreadyPaid: event.target.checked }))
+              }
+              className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+            />
+            <span>
+              Ya está pagado
+              <span className="block text-xs font-normal text-slate-500">
+                Se registrará como pagado con fecha de emisión (efectivo, tarjeta y Yape lo marcan solos)
+              </span>
+            </span>
           </label>
           <label className="text-sm font-medium text-slate-600">
             Categoría
@@ -952,7 +1180,11 @@ export default function EgresosPage() {
             className="w-full rounded-lg bg-slate-900 py-3 text-center text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:opacity-60"
             disabled={isSaving}
           >
-            {isSaving ? 'Guardando...' : 'Registrar egreso'}
+            {isSaving
+              ? 'Guardando...'
+              : editingExpenseId
+                ? 'Guardar cambios'
+                : 'Registrar egreso'}
           </button>
         </form>
       </Modal>

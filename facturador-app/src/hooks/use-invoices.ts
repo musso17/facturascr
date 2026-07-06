@@ -225,6 +225,31 @@ export function useInvoices() {
     [],
   );
 
+  const setDetractionDeposited = useCallback(
+    async (invoiceId: string, deposited: boolean): Promise<InvoiceMutationResult> => {
+      const { data, error } = await supabase
+        .from('invoices')
+        .update({ metadata: { detraction_deposited: deposited } })
+        .eq('id', invoiceId)
+        .select()
+        .single();
+
+      if (error) {
+        console.error(error);
+        return { error: describeSupabaseError(error) ?? 'No se pudo actualizar la detracción.' };
+      }
+      if (data) {
+        const mapped = mapInvoiceRow(data as SupabaseInvoiceRow);
+        setInvoices((prev) =>
+          prev.map((invoice) => (invoice.recordId === invoiceId ? mapped : invoice)),
+        );
+        return { data: mapped };
+      }
+      return { error: 'Respuesta inesperada de Supabase.' };
+    },
+    [],
+  );
+
   const deleteInvoice = useCallback(
     async (invoiceId: string): Promise<{ error?: string }> => {
       const { error } = await supabase.from('invoices').delete().eq('id', invoiceId);
@@ -250,5 +275,6 @@ export function useInvoices() {
     applyManualPayment,
     markAsPaid,
     revertPayment,
+    setDetractionDeposited,
   };
 }

@@ -1,7 +1,8 @@
 'use client';
 
-import { InvoiceFormState, InvoiceStatus } from '@/lib/accounting-types';
+import { InvoiceFormState, InvoiceRecord, InvoiceStatus } from '@/lib/accounting-types';
 import { asLocalDate, round, summarizeInvoices, shortenName, filterByMonth } from '@/lib/accounting-service';
+import { calcDetraction } from '@/lib/detraction';
 import { useInvoices } from '@/hooks/use-invoices';
 import { usePartners } from '@/hooks/use-partners';
 import {
@@ -63,6 +64,21 @@ const getInitials = (name: string) => {
   }
   return (name.substring(0, 2) || '??').toUpperCase();
 };
+
+// P3: días de atraso de una factura (0 si no está vencida)
+const getDaysOverdue = (invoice: InvoiceRecord) => {
+  if (invoice.status !== 'Vencido') return 0;
+  const due = asLocalDate(invoice.dueDate);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  due.setHours(0, 0, 0, 0);
+  return Math.max(0, Math.round((today.getTime() - due.getTime()) / (1000 * 60 * 60 * 24)));
+};
+
+type AgingBucket = '0-15' | '16-30' | '+30';
+
+const getAgingBucket = (days: number): AgingBucket =>
+  days > 30 ? '+30' : days > 15 ? '16-30' : '0-15';
 
 const getDueDateInfo = (dueDate: string, status: InvoiceStatus) => {
   if (status === 'Pagado') {
@@ -164,6 +180,7 @@ const INITIAL_FORM: InvoiceForm = {
   amount: '',
   vat: '18',
   paid: '',
+  detractionDeposited: false,
 };
 
 const INITIAL_PAYMENT_FORM: PaymentForm = {
@@ -182,12 +199,14 @@ export default function IngresosPage() {
     revertPayment,
     updateInvoice,
     deleteInvoice,
+    setDetractionDeposited,
   } = useInvoices();
   const { partners } = usePartners();
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('todos');
   const [monthFilter, setMonthFilter] = useState('todos');
   const [clientFilter, setClientFilter] = useState('todos');
+  const [agingFilter, setAgingFilter] = useState<AgingBucket | null>(null);
   const [sortBy] = useState<SortOption>('fecha');
   const [form, setForm] = useState<InvoiceForm>(INITIAL_FORM);
   const [paymentForm, setPaymentForm] = useState<PaymentForm>(
@@ -227,6 +246,11 @@ export default function IngresosPage() {
       .filter((invoice) =>
         clientFilter === 'todos' ? true : invoice.clientId === clientFilter,
       )
+      .filter((invoice) =>
+        agingFilter === null
+          ? true
+          : invoice.status === 'Vencido' && getAgingBucket(getDaysOverdue(invoice)) === agingFilter,
+      )
       .filter((invoice) => {
         if (!term) return true;
         const partner = partners.find(p => p.id === invoice.clientId);
@@ -240,6 +264,12 @@ export default function IngresosPage() {
         );
       })
       .sort((a, b) => {
+        // Vencidos siempre ordenados por días de atraso descendente (P3)
+        const overdueA = getDaysOverdue(a);
+        const overdueB = getDaysOverdue(b);
+        if (statusFilter === 'Vencido' || agingFilter !== null) {
+          return overdueB - overdueA;
+        }
         switch (sortBy) {
           case 'cliente':
             return a.client.localeCompare(b.client, 'es');
@@ -250,7 +280,26 @@ export default function IngresosPage() {
             return asLocalDate(b.issueDate).getTime() - asLocalDate(a.issueDate).getTime();
         }
       });
-  }, [monthScopedInvoices, searchTerm, statusFilter, clientFilter, sortBy, partners]);
+  }, [monthScopedInvoices, searchTerm, statusFilter, clientFilter, agingFilter, sortBy, partners]);
+
+  // P3: aging de cobranza por tramos
+  const agingBuckets = useMemo(() => {
+    const buckets: Record<AgingBucket, { count: number; total: number }> = {
+      '0-15': { count: 0, total: 0 },
+      '16-30': { count: 0, total: 0 },
+      '+30': { count: 0, total: 0 },
+    };
+    for (const invoice of monthScopedInvoices) {
+      if (invoice.status !== 'Vencido') continue;
+      const bucket = getAgingBucket(getDaysOverdue(invoice));
+      buckets[bucket].count += 1;
+      buckets[bucket].total += invoice.balance;
+    }
+    return buckets;
+  }, [monthScopedInvoices]);
+
+  const hasOverdue =
+    agingBuckets['0-15'].count + agingBuckets['16-30'].count + agingBuckets['+30'].count > 0;
 
   const totals = useMemo(() => summarizeInvoices(monthScopedInvoices), [monthScopedInvoices]);
   const visibleTotals = useMemo(
@@ -320,6 +369,7 @@ export default function IngresosPage() {
       amount: invoice.amount.toString(),
       vat: invoice.vat.toString(),
       paid: invoice.paid.toString(),
+      detractionDeposited: invoice.detractionDeposited ?? false,
     });
     setEditingInvoiceRecordId(invoice.recordId);
     setFormError(null);
@@ -416,7 +466,26 @@ export default function IngresosPage() {
     setStatusFilter('todos');
     setMonthFilter('todos');
     setClientFilter('todos');
+    setAgingFilter(null);
   }
+
+  const buildReminder = (invoice: InvoiceRecord) => {
+    const days = getDaysOverdue(invoice);
+    const partner = invoice.clientId
+      ? partners.find((p) => p.id === invoice.clientId)
+      : partners.find((p) => p.name === invoice.client || p.tradeName === invoice.client);
+    const subject = `Recordatorio de pago — Factura ${invoice.id}`;
+    const body = `Estimados,\n\nLes recordamos que la factura ${invoice.id} por ${formatCurrency(invoice.balance)} venció hace ${days} día${days > 1 ? 's' : ''} (${formatDate(invoice.dueDate)}).\n\nAgradecemos programar el pago a la brevedad.\n\nSaludos,\nCerezo`;
+    if (partner?.email) {
+      window.open(
+        `mailto:${partner.email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`,
+        '_blank',
+      );
+    } else {
+      void navigator.clipboard.writeText(`${subject}\n\n${body}`);
+      alert('El cliente no tiene email registrado. Recordatorio copiado al portapapeles.');
+    }
+  };
 
   const summaryCards = [
     {
@@ -507,6 +576,50 @@ export default function IngresosPage() {
           ))}
         </section>
 
+        {hasOverdue && (
+          <section className="rounded-xl border border-red-200 bg-white shadow-sm">
+            <div className="px-5 pt-4 pb-1">
+              <h2 className="text-sm font-bold uppercase tracking-wide text-red-700">
+                Aging de cobranza — vencidos por antigüedad
+              </h2>
+            </div>
+            <div className="grid gap-3 p-4 sm:grid-cols-3">
+              {(
+                [
+                  { bucket: '0-15' as AgingBucket, label: '0–15 días', tone: 'amber' },
+                  { bucket: '16-30' as AgingBucket, label: '16–30 días', tone: 'orange' },
+                  { bucket: '+30' as AgingBucket, label: 'Más de 30 días', tone: 'red' },
+                ]
+              ).map(({ bucket, label, tone }) => {
+                const data = agingBuckets[bucket];
+                const active = agingFilter === bucket;
+                const toneMap = {
+                  amber: 'border-amber-200 bg-amber-50 text-amber-800',
+                  orange: 'border-orange-200 bg-orange-50 text-orange-800',
+                  red: 'border-red-200 bg-red-50 text-red-800',
+                };
+                return (
+                  <button
+                    key={bucket}
+                    type="button"
+                    onClick={() => setAgingFilter(active ? null : bucket)}
+                    className={`rounded-xl border p-4 text-left transition-all ${toneMap[tone as keyof typeof toneMap]} ${
+                      active ? 'ring-2 ring-slate-900' : 'hover:shadow-md'
+                    } ${data.count === 0 ? 'opacity-45' : ''}`}
+                  >
+                    <p className="text-xs font-bold uppercase tracking-wide">{label}</p>
+                    <p className="mt-1 text-2xl font-black">{formatCurrencyNoDecimals(data.total)}</p>
+                    <p className="text-xs font-medium">
+                      {data.count} factura{data.count !== 1 ? 's' : ''}
+                      {active ? ' · filtrando' : ''}
+                    </p>
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+        )}
+
         <section className="space-y-5">
           <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
             <div className="flex flex-col lg:flex-row gap-4">
@@ -572,6 +685,9 @@ export default function IngresosPage() {
                   ) : (
                     filteredInvoices.map((invoice) => {
                       const dueDateInfo = getDueDateInfo(invoice.dueDate, invoice.status);
+                      const daysOverdue = getDaysOverdue(invoice);
+                      const isCritical = daysOverdue > 30;
+                      const detraction = calcDetraction(invoice.total);
                       let partner = null;
                       if (invoice.clientId) {
                         partner = partners.find((p) => p.id === invoice.clientId);
@@ -583,7 +699,14 @@ export default function IngresosPage() {
                       const displayName = partner?.name ?? invoice.client;
                       const displayRuc = partner?.documentNumber ?? invoice.ruc;
                       return (
-                        <tr key={invoice.recordId || invoice.id} className="border-b border-slate-200 hover:bg-slate-50 transition-colors group">
+                        <tr
+                          key={invoice.recordId || invoice.id}
+                          className={`border-b transition-colors group ${
+                            isCritical
+                              ? 'border-red-200 bg-red-50/70 hover:bg-red-50'
+                              : 'border-slate-200 hover:bg-slate-50'
+                          }`}
+                        >
                           <td className="px-4 py-4 whitespace-nowrap">
                             <div className="flex items-center gap-2">
                               <FileText className="w-3.5 h-3.5 text-slate-400" />
@@ -611,7 +734,18 @@ export default function IngresosPage() {
                             <div className="flex items-center gap-2">
                               {dueDateInfo?.icon ?? <Calendar className="w-3.5 h-3.5 text-slate-400" />}
                               <span className="text-slate-900 font-medium text-sm">{formatDate(invoice.dueDate)}</span>
-                              {dueDateInfo && <span className={dueDateInfo.className}>{dueDateInfo.text}</span>}
+                              {invoice.status === 'Vencido' ? (
+                                <span
+                                  className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-sm font-black ${
+                                    isCritical ? 'bg-red-600 text-white' : 'bg-red-100 text-red-700'
+                                  }`}
+                                  title={`Vencida hace ${daysOverdue} días`}
+                                >
+                                  {daysOverdue}d
+                                </span>
+                              ) : (
+                                dueDateInfo && <span className={dueDateInfo.className}>{dueDateInfo.text}</span>
+                              )}
                             </div>
                           </td>
                           <td className="px-4 py-4 max-w-xs">
@@ -619,9 +753,33 @@ export default function IngresosPage() {
                           </td>
                           <td className="px-4 py-4 text-right whitespace-nowrap">
                             <span className="text-slate-900 font-semibold">{formatCurrency(invoice.total)}</span>
+                            {detraction.applies && (
+                              <p className="text-[11px] text-slate-500" title="Detracción SPOT 12% al Banco de la Nación">
+                                Detracción: {formatCurrency(detraction.detractionAmount)}
+                              </p>
+                            )}
                           </td>
                           <td className="px-4 py-4 text-right whitespace-nowrap">
                             <span className="text-green-600 font-medium">{formatCurrency(invoice.paid)}</span>
+                            {detraction.applies && invoice.status === 'Pagado' && (
+                              <p className="text-[11px] text-slate-500">
+                                CC {formatCurrency(detraction.netAmount)} · BN{' '}
+                                {formatCurrency(detraction.detractionAmount)}
+                              </p>
+                            )}
+                            {detraction.applies && (
+                              <label className="mt-1 flex items-center justify-end gap-1.5 text-[11px] font-medium text-slate-600">
+                                <input
+                                  type="checkbox"
+                                  checked={invoice.detractionDeposited ?? false}
+                                  onChange={(e) =>
+                                    void setDetractionDeposited(invoice.recordId, e.target.checked)
+                                  }
+                                  className="h-3.5 w-3.5 rounded border-slate-300 text-blue-600"
+                                />
+                                Detracción depositada
+                              </label>
+                            )}
                           </td>
                           <td className="px-4 py-4 text-right whitespace-nowrap">
                             <span className={`font-bold text-base ${invoice.balance > 0 ? 'text-red-600' : 'text-slate-800'}`}>{formatCurrency(invoice.balance)}</span>
@@ -630,7 +788,26 @@ export default function IngresosPage() {
                             {STATUS_META[invoice.status].badge}
                           </td>
                           <td className="px-4 py-4 text-right whitespace-nowrap">
+                            {isCritical && (
+                              <button
+                                onClick={() => buildReminder(invoice)}
+                                className="mb-1.5 inline-flex items-center gap-1 rounded-lg bg-red-600 px-3 py-1.5 text-xs font-bold text-white shadow-sm hover:bg-red-700 transition-colors"
+                                title={`Vencida hace ${daysOverdue} días — enviar recordatorio`}
+                              >
+                                <AlertCircle className="h-3.5 w-3.5" />
+                                Recordatorio
+                              </button>
+                            )}
                             <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                              {invoice.status === 'Vencido' && !isCritical && (
+                                <button
+                                  onClick={() => buildReminder(invoice)}
+                                  className="px-3 py-1.5 bg-amber-100 hover:bg-amber-200 text-amber-800 rounded-lg text-xs font-semibold transition-colors"
+                                  title="Enviar recordatorio de pago"
+                                >
+                                  Recordatorio
+                                </button>
+                              )}
                               <button onClick={() => handleEditInvoice(invoice)} disabled={busyInvoiceId === invoice.recordId} className="p-1.5 text-slate-400 hover:text-blue-600 rounded bg-slate-50 hover:bg-blue-50 transition-colors" title="Editar">
                                 <Edit2 className="w-4 h-4" />
                               </button>
@@ -782,16 +959,46 @@ export default function IngresosPage() {
               onChange={(value) => setForm((prev) => ({ ...prev, vat: value }))}
             />
           </div>
-          <div className="rounded-xl bg-slate-50 p-3 text-sm text-slate-600">
-            <p>
-              Total estimado:
-              <span className="font-semibold text-slate-900">
-                {formatCurrency(
-                  round((Number(form.amount) || 0) * (1 + (Number(form.vat) || 0) / 100)),
+          {(() => {
+            const estimatedTotal = round(
+              (Number(form.amount) || 0) * (1 + (Number(form.vat) || 0) / 100),
+            );
+            const detraction = calcDetraction(estimatedTotal);
+            return (
+              <div className="rounded-xl bg-slate-50 p-3 text-sm text-slate-600 space-y-2">
+                <p>
+                  Total estimado:{' '}
+                  <span className="font-semibold text-slate-900">{formatCurrency(estimatedTotal)}</span>
+                </p>
+                {detraction.applies && (
+                  <>
+                    <p className="text-xs text-slate-500">
+                      Sujeta a detracción SPOT (12%): el cliente deposita{' '}
+                      <span className="font-semibold text-slate-700">
+                        {formatCurrency(detraction.detractionAmount)}
+                      </span>{' '}
+                      al Banco de la Nación y recibes{' '}
+                      <span className="font-semibold text-slate-700">
+                        {formatCurrency(detraction.netAmount)}
+                      </span>{' '}
+                      en tu cuenta corriente.
+                    </p>
+                    <label className="flex items-center gap-2 text-xs font-medium text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={form.detractionDeposited ?? false}
+                        onChange={(e) =>
+                          setForm((prev) => ({ ...prev, detractionDeposited: e.target.checked }))
+                        }
+                        className="h-4 w-4 rounded border-slate-300 text-blue-600"
+                      />
+                      Detracción ya depositada en el BN
+                    </label>
+                  </>
                 )}
-              </span>
-            </p>
-          </div>
+              </div>
+            );
+          })()}
           {formError && (
             <p className="text-sm font-medium text-rose-600">{formError}</p>
           )}

@@ -5,6 +5,7 @@ import { useMemo, useState, type ReactNode } from 'react';
 import {
   AlertTriangle,
   Bell,
+  CalendarClock,
   CheckCircle2,
   Eye,
   FileText,
@@ -103,6 +104,38 @@ export default function DashboardPage() {
     [lastSixStats],
   );
 
+  // ─── P2: Caja real y proyección a 30 días ────────────────────────────────────
+  const [cashThreshold, setCashThreshold] = useState(() => {
+    if (typeof window === 'undefined') return 12000;
+    return Number(localStorage.getItem('cashAlertThreshold')) || 12000;
+  });
+
+  const handleThresholdChange = (value: number) => {
+    setCashThreshold(value);
+    localStorage.setItem('cashAlertThreshold', String(value));
+  };
+
+  // IGV del scope: ventas (total − base) menos compras (igvAmount), nunca negativo
+  const scopeIgvPayable = useMemo(() => {
+    const igvSales = filteredInvoices.reduce((s, inv) => s + (inv.total - inv.amount), 0);
+    const igvPurchases = filteredExpenses.reduce((s, e) => s + e.igvAmount, 0);
+    return Math.max(0, igvSales - igvPurchases);
+  }, [filteredInvoices, filteredExpenses]);
+
+  // Pago a cuenta renta: 1% de la base facturada del scope (Régimen MYPE)
+  const scopeRentaPayment = useMemo(
+    () => filteredInvoices.reduce((s, inv) => s + inv.amount, 0) * 0.01,
+    [filteredInvoices],
+  );
+
+  const cajaReal =
+    totals.pagado - expenseSummary.paid - scopeIgvPayable - scopeRentaPayment;
+
+  const projection = useMemo(
+    () => buildThirtyDayProjection(invoices, expenses),
+    [invoices, expenses],
+  );
+
   const metricCards = [
     {
       label: 'Facturado',
@@ -126,12 +159,21 @@ export default function DashboardPage() {
       delta: hasMonthlySelection ? percentChange(currentStats?.expenseBilled, previousStats?.expenseBilled) : null,
     },
     {
-      label: 'Utilidad neta',
+      label: 'Utilidad devengada',
       value: totals.facturado - expenseSummary.total,
-      hint: 'Facturado - Gastos',
+      hint: 'Facturado − gastos (no es caja)',
       accent: 'bg-purple-50 text-purple-600',
-      tooltip: 'Facturado - Gastos',
+      tooltip: 'Base devengada: incluye lo aún no cobrado y no descuenta impuestos',
       delta: hasMonthlySelection ? percentChange(currentStats?.net ?? 0, previousStats?.net ?? 0) : null,
+    },
+    {
+      label: 'Caja real',
+      value: cajaReal,
+      hint: 'Cobrado − pagado − IGV − renta 1%',
+      accent: 'bg-teal-50 text-teal-600',
+      tooltip:
+        'Posición real de caja del período: cobros efectivos menos pagos efectivos, IGV por pagar y pago a cuenta de renta (1%)',
+      delta: null,
     },
   ];
 
@@ -216,7 +258,7 @@ export default function DashboardPage() {
             </p>
           )}
 
-          <section className="grid gap-6 md:grid-cols-2 xl:grid-cols-4 animate-fade-in">
+          <section className="grid gap-6 md:grid-cols-2 xl:grid-cols-5 animate-fade-in">
             {metricCards.map((card) => (
               <article
                 key={card.label}
@@ -241,13 +283,84 @@ export default function DashboardPage() {
                     {(card.delta ?? 0) >= 0 ? '↗' : '↘'} {formatDelta(card.delta ?? 0)}
                   </span>
                 )}
-                {card.label === 'Utilidad neta' && card.value < 0 && (
-                  <span className="mt-3 inline-flex items-center rounded-md bg-red-50 px-2 py-0.5 text-xs font-medium text-red-600">
-                    Utilidad negativa
-                  </span>
-                )}
+                {(card.label === 'Utilidad devengada' || card.label === 'Caja real') &&
+                  card.value < 0 && (
+                    <span className="mt-3 inline-flex items-center rounded-md bg-red-50 px-2 py-0.5 text-xs font-medium text-red-600">
+                      Posición negativa
+                    </span>
+                  )}
               </article>
             ))}
+          </section>
+
+          {/* ── P2: Proyección a 30 días ──────────────────────────────────────── */}
+          <section
+            className={`rounded-xl border p-6 shadow-sm animate-fade-in ${
+              projection.projected < 0
+                ? 'border-red-200 bg-red-50'
+                : projection.projected < cashThreshold
+                  ? 'border-amber-200 bg-amber-50'
+                  : 'border-emerald-200 bg-emerald-50'
+            }`}
+          >
+            <div className="flex flex-wrap items-start justify-between gap-6">
+              <div className="flex items-start gap-3">
+                <div
+                  className={`rounded-lg p-2.5 ${
+                    projection.projected < 0
+                      ? 'bg-red-100 text-red-600'
+                      : projection.projected < cashThreshold
+                        ? 'bg-amber-100 text-amber-600'
+                        : 'bg-emerald-100 text-emerald-600'
+                  }`}
+                >
+                  <CalendarClock className="h-5 w-5" />
+                </div>
+                <div>
+                  <h2 className="text-lg font-semibold text-gray-900">Proyección de caja a 30 días</h2>
+                  <p className="text-sm text-gray-600">
+                    Caja actual más cobros esperados, menos pagos comprometidos, nómina e impuestos.
+                  </p>
+                  <p className="mt-1 text-xs text-gray-500">
+                    Umbral de alerta:{' '}
+                    <input
+                      type="number"
+                      value={cashThreshold}
+                      onChange={(e) => handleThresholdChange(Number(e.target.value) || 0)}
+                      className="w-24 rounded border border-gray-300 bg-white px-2 py-0.5 text-xs font-semibold"
+                    />{' '}
+                    (≈ 1 mes de nómina)
+                  </p>
+                </div>
+              </div>
+              <div className="text-right">
+                <p className="text-xs font-semibold uppercase tracking-widest text-gray-500">
+                  Proyectado al {formatDate(projection.horizonDate)}
+                </p>
+                <p
+                  className={`text-4xl font-black ${
+                    projection.projected < 0
+                      ? 'text-red-700'
+                      : projection.projected < cashThreshold
+                        ? 'text-amber-700'
+                        : 'text-emerald-700'
+                  }`}
+                >
+                  {formatCurrencyNoDecimals(projection.projected)}
+                </p>
+                <p className="text-xs font-medium text-gray-600">
+                  Sin cobrar nada nuevo: {formatCurrencyNoDecimals(projection.worstCase)}
+                </p>
+              </div>
+            </div>
+            <div className="mt-5 grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-6">
+              <ProjectionItem label="Caja hoy (cobrado − pagado)" value={projection.cashToday} />
+              <ProjectionItem label="Cobros por vencer (+)" value={projection.expectedIn} positive />
+              <ProjectionItem label="Egresos comprometidos (−)" value={-projection.committedOut} />
+              <ProjectionItem label="Nómina estimada día 15 (−)" value={-projection.estimatedPayroll} />
+              <ProjectionItem label="IGV mes anterior, vence ~12 (−)" value={-projection.igvDue} />
+              <ProjectionItem label="Renta 1% mes anterior (−)" value={-projection.rentaDue} />
+            </div>
           </section>
 
           {chartData.length > 0 && (
@@ -625,6 +738,113 @@ function formatMonthShortLabel(value: string) {
   const [year, month] = value.split('-').map(Number);
   const date = new Date(year ?? 1970, (month ?? 1) - 1, 1);
   return new Intl.DateTimeFormat('es-PE', { month: 'short' }).format(date);
+}
+
+function ProjectionItem({
+  label,
+  value,
+  positive,
+}: {
+  label: string;
+  value: number;
+  positive?: boolean;
+}) {
+  return (
+    <div className="rounded-lg bg-white/70 px-3 py-2">
+      <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">{label}</p>
+      <p
+        className={`text-base font-bold ${
+          positive ? 'text-emerald-700' : value < 0 ? 'text-red-600' : 'text-gray-900'
+        }`}
+      >
+        {new Intl.NumberFormat('es-PE', {
+          style: 'currency',
+          currency: 'PEN',
+          minimumFractionDigits: 0,
+          maximumFractionDigits: 0,
+        }).format(value)}
+      </p>
+    </div>
+  );
+}
+
+type ProjectionExpense = {
+  documentType: string;
+  issueDate: string;
+  dueDate?: string | null;
+  totalAmount: number;
+  paidAmount: number;
+  igvAmount: number;
+  status: string;
+};
+
+function buildThirtyDayProjection(invoices: InvoiceRecord[], expenses: ProjectionExpense[]) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const horizon = new Date(today);
+  horizon.setDate(horizon.getDate() + 30);
+  const horizonDate = horizon.toISOString().slice(0, 10);
+
+  // Caja acumulada real: todo lo cobrado menos todo lo pagado en la historia
+  const cashToday =
+    invoices.reduce((s, inv) => s + inv.paid, 0) -
+    expenses.reduce((s, e) => s + e.paidAmount, 0);
+
+  // Cobros esperados: facturas con saldo cuyo vencimiento cae dentro de la ventana (incluye vencidas)
+  const expectedIn = invoices
+    .filter((inv) => inv.balance > 0 && asLocalDate(inv.dueDate) <= horizon)
+    .reduce((s, inv) => s + inv.balance, 0);
+
+  // Egresos ya registrados pendientes de pago dentro de la ventana
+  const committedWindow = expenses.filter(
+    (e) =>
+      e.status !== 'pagado' &&
+      asLocalDate(e.dueDate ?? e.issueDate) <= horizon,
+  );
+  const committedOut = committedWindow.reduce(
+    (s, e) => s + Math.max(e.totalAmount - e.paidAmount, 0),
+    0,
+  );
+
+  // Mes anterior como referencia de obligaciones recurrentes
+  const prev = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+  const prevKey = `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, '0')}`;
+
+  // Nómina estimada (recibos por honorarios del mes anterior) que aún no está registrada como egreso pendiente
+  const prevPayroll = expenses
+    .filter((e) => e.documentType === 'recibo' && e.issueDate.startsWith(prevKey))
+    .reduce((s, e) => s + e.totalAmount, 0);
+  const pendingPayrollInWindow = committedWindow
+    .filter((e) => e.documentType === 'recibo')
+    .reduce((s, e) => s + Math.max(e.totalAmount - e.paidAmount, 0), 0);
+  const estimatedPayroll = Math.max(0, prevPayroll - pendingPayrollInWindow);
+
+  // IGV del mes anterior (vence ~día 12 según cronograma SUNAT)
+  const prevInvoices = invoices.filter((inv) => inv.issueDate.startsWith(prevKey));
+  const prevIgvSales = prevInvoices.reduce((s, inv) => s + (inv.total - inv.amount), 0);
+  const prevIgvPurchases = expenses
+    .filter((e) => e.issueDate.startsWith(prevKey))
+    .reduce((s, e) => s + e.igvAmount, 0);
+  const igvDue = Math.max(0, prevIgvSales - prevIgvPurchases);
+
+  // Pago a cuenta renta 1% sobre base facturada del mes anterior
+  const rentaDue = prevInvoices.reduce((s, inv) => s + inv.amount, 0) * 0.01;
+
+  const projected =
+    cashToday + expectedIn - committedOut - estimatedPayroll - igvDue - rentaDue;
+  const worstCase = cashToday - committedOut - estimatedPayroll - igvDue - rentaDue;
+
+  return {
+    horizonDate,
+    cashToday,
+    expectedIn,
+    committedOut,
+    estimatedPayroll,
+    igvDue,
+    rentaDue,
+    projected,
+    worstCase,
+  };
 }
 
 function getDueSoon(invoices: InvoiceRecord[]) {

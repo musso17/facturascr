@@ -39,6 +39,7 @@ export interface InvoiceFormState {
   amount: string;
   vat: string;
   paid: string;
+  detractionDeposited?: boolean;
 }
 
 export interface InvoiceRecord {
@@ -62,6 +63,7 @@ export interface InvoiceRecord {
   retentionIR?: number | null;
   itf?: number | null;
   category?: string | null;
+  detractionDeposited?: boolean;
 }
 
 export interface SupabaseInvoiceRow {
@@ -97,6 +99,8 @@ export interface ExpenseRecord {
   issueDate: string;
   dueDate?: string | null;
   partnerId?: string | null;
+  clientId?: string | null;
+  clientName?: string | null;
   providerName: string;
   providerDocument?: string | null;
   concept: string;
@@ -210,4 +214,36 @@ export interface SupabaseProjectRow {
   metadata?: Record<string, unknown> | null;
   created_at?: string | null;
   updated_at?: string | null;
+}
+
+export interface PartnerPayout {
+  bono: number;
+  utilidad: number;
+  total: number;
+}
+
+export interface LiquidationRecord {
+  id: string;
+  period: string; // YYYY-MM (mes de cierre del trimestre)
+  excedente: number;
+  reserva: number;
+  fondoCrecimiento: number;
+  utilidadNeta: number;
+  payouts: Record<string, PartnerPayout>; // marcelo | mauricio | edson
+  ventas: Record<string, number>;
+  notes?: string | null;
+  createdAt?: string | null;
+}
+
+export interface SupabaseLiquidationRow {
+  id: string;
+  period: string;
+  excedente: number;
+  reserva: number;
+  fondo_crecimiento: number;
+  utilidad_neta: number;
+  payouts: Record<string, PartnerPayout>;
+  ventas: Record<string, number>;
+  notes: string | null;
+  created_at: string | null;
 }

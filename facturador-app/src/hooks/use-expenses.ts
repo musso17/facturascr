@@ -25,6 +25,7 @@ export function useExpenses() {
   const [syncError, setSyncError] = useState<string | null>(null);
 
   const mapExpenseRow = useCallback((row: SupabaseExpenseRow): ExpenseRecord => {
+    const meta = (row.metadata ?? {}) as { client_id?: string | null; client_name?: string | null };
     return {
       id: row.id,
       documentType: row.document_type,
@@ -33,6 +34,8 @@ export function useExpenses() {
       issueDate: row.issue_date,
       dueDate: row.due_date,
       partnerId: row.partner_id,
+      clientId: meta.client_id ?? null,
+      clientName: meta.client_name ?? null,
       providerName: row.provider_name,
       providerDocument: row.provider_document,
       concept: row.concept,
@@ -100,6 +103,10 @@ export function useExpenses() {
         status: input.status ?? 'pendiente',
         paid_amount: input.paidAmount ?? 0,
         notes: input.notes ?? null,
+        metadata: {
+          client_id: input.clientId ?? null,
+          client_name: input.clientName ?? null,
+        },
       };
 
       const { data, error } = await supabase.from('expenses').insert(payload).select().single();
@@ -181,6 +188,12 @@ export function useExpenses() {
       if ('status' in patch) payload.status = patch.status;
       if ('paidAmount' in patch) payload.paid_amount = patch.paidAmount ?? 0;
       if ('notes' in patch) payload.notes = patch.notes ?? null;
+      if ('clientId' in patch || 'clientName' in patch) {
+        payload.metadata = {
+          client_id: patch.clientId ?? null,
+          client_name: patch.clientName ?? null,
+        };
+      }
 
       const { data, error } = await supabase.from('expenses').update(payload).eq('id', id).select().single();
 

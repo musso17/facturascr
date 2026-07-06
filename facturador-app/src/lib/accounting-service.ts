@@ -35,6 +35,7 @@ export function mapInvoiceRow(row: SupabaseInvoiceRow): InvoiceRecord {
   const vat = row.vat ?? 0;
   const total = row.total ?? round(amount * (1 + vat / 100));
   const paid = row.paid ?? 0;
+  const meta = (row.metadata ?? {}) as { detraction_deposited?: boolean };
   const persistedStatus =
     row.status && ACCOUNTING_STATUS_TO_LABEL[row.status]
       ? ACCOUNTING_STATUS_TO_LABEL[row.status]
@@ -62,6 +63,7 @@ export function mapInvoiceRow(row: SupabaseInvoiceRow): InvoiceRecord {
       retentionIR: row.retention_ir ?? 0,
       itf: row.itf ?? 0,
       category: row.category ?? null,
+      detractionDeposited: meta.detraction_deposited ?? false,
     },
     persistedStatus,
   );
@@ -321,6 +323,9 @@ export function buildInvoicePayload(input: InvoiceFormState) {
     vat,
     total,
     paid,
+    metadata: {
+      detraction_deposited: input.detractionDeposited ?? false,
+    },
   };
 }
 

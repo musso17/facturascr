@@ -2,7 +2,9 @@
 
 import { useTaxSummary } from '@/hooks/use-tax-summary';
 import { useExpenses } from '@/hooks/use-expenses';
+import { useInvoices } from '@/hooks/use-invoices';
 import { asLocalDate } from '@/lib/accounting-service';
+import { calcDetraction } from '@/lib/detraction';
 import {
   FileDown,
   Landmark,
@@ -24,6 +26,36 @@ const CURRENT_YEAR = new Date().getFullYear();
 export default function ImpuestosPage() {
   const { items, currentMonth, isLoading, refresh } = useTaxSummary();
   const { expenses } = useExpenses();
+  const { invoices } = useInvoices();
+
+  // ─── P4: Saldo estimado cuenta detracciones (BN) ─────────────────────────────
+  const [bnSunatPaid, setBnSunatPaid] = useState(() => {
+    if (typeof window === 'undefined') return '0';
+    return localStorage.getItem('bnSunatPayments') ?? '0';
+  });
+
+  const detraccionesDepositadas = useMemo(
+    () =>
+      invoices
+        .filter((inv) => inv.detractionDeposited)
+        .reduce((sum, inv) => sum + calcDetraction(inv.total).detractionAmount, 0),
+    [invoices],
+  );
+
+  const pendingDetractions = useMemo(
+    () =>
+      invoices.filter(
+        (inv) => calcDetraction(inv.total).applies && !inv.detractionDeposited,
+      ).length,
+    [invoices],
+  );
+
+  const bnBalance = detraccionesDepositadas - (parseFloat(bnSunatPaid) || 0);
+
+  const handleBnPaidChange = (value: string) => {
+    setBnSunatPaid(value);
+    localStorage.setItem('bnSunatPayments', value);
+  };
 
   // ─── Simulador ───────────────────────────────────────────────────────────────
   const [simAmount, setSimAmount] = useState('');
@@ -192,6 +224,65 @@ export default function ImpuestosPage() {
               <p className="text-slate-500 text-sm mt-2">{card.hint}</p>
             </div>
           ))}
+        </section>
+
+        {/* ── P4: Cuenta de detracciones (BN) ─────────────────────────────────── */}
+        <section className="bg-white border border-slate-200 rounded-xl shadow-sm p-6">
+          <div className="flex flex-wrap items-start justify-between gap-6">
+            <div className="flex items-center gap-3">
+              <div className="bg-cyan-100 p-2.5 rounded-lg">
+                <Landmark className="w-5 h-5 text-cyan-600" />
+              </div>
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900">
+                  Cuenta de detracciones (Banco de la Nación)
+                </h2>
+                <p className="text-sm text-slate-500">
+                  Con este saldo pagas el IGV. Marca “detracción depositada” en cada factura de Ingresos.
+                </p>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-6">
+              <div>
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
+                  Depositado (facturas marcadas)
+                </p>
+                <p className="text-2xl font-bold text-slate-900">
+                  {formatCurrency(detraccionesDepositadas)}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
+                  Pagos SUNAT desde BN
+                </p>
+                <div className="relative mt-0.5">
+                  <span className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-500 text-sm">S/</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={bnSunatPaid}
+                    onChange={(e) => handleBnPaidChange(e.target.value)}
+                    className="w-32 rounded-lg border border-slate-300 py-1.5 pl-7 pr-2 text-lg font-semibold text-slate-900 outline-none focus:border-cyan-500"
+                  />
+                </div>
+              </div>
+              <div>
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
+                  Saldo estimado BN
+                </p>
+                <p className={`text-2xl font-bold ${bnBalance >= 0 ? 'text-cyan-700' : 'text-red-600'}`}>
+                  {formatCurrency(bnBalance)}
+                </p>
+              </div>
+            </div>
+          </div>
+          {pendingDetractions > 0 && (
+            <p className="mt-4 rounded-lg bg-amber-50 border border-amber-100 px-3 py-2 text-xs text-amber-700 flex items-center gap-2">
+              <AlertCircle className="w-3.5 h-3.5" />
+              {pendingDetractions} factura{pendingDetractions > 1 ? 's' : ''} sujeta{pendingDetractions > 1 ? 's' : ''} a detracción aún sin marcar como depositada — el saldo real puede ser mayor.
+            </p>
+          )}
         </section>
 
         {/* ── Simulador de compra ─────────────────────────────────────────────── */}
