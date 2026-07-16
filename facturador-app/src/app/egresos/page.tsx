@@ -230,39 +230,69 @@ export default function EgresosPage() {
       setFormError('El archivo es muy pesado (máximo 5MB).');
       return;
     }
+    if (!file.type.includes('pdf') && !file.name.toLowerCase().endsWith('.pdf')) {
+      setFormError('Solo se admiten archivos PDF. Para imágenes, ingresa los datos manualmente.');
+      return;
+    }
 
     setIsScanning(true);
     setFormError(null);
 
-    const formData = new FormData();
-    formData.append('file', file);
-
     try {
-      const res = await fetch('/api/scan-invoice', {
-        method: 'POST',
-        body: formData,
-      });
-
-      if (!res.ok) {
-        const errorData = await res.json().catch(() => ({}));
-        throw new Error(errorData.error || 'Error al procesar el documento');
-      }
-
-      const { data } = await res.json();
+      // Extracción 100% en el navegador: no depende de funciones serverless
+      const { extractText, getDocumentProxy } = await import('unpdf');
+      const bytes = await file.arrayBuffer();
+      const pdf = await getDocumentProxy(new Uint8Array(bytes));
+      const { text } = await extractText(pdf, { mergePages: true });
+      const { parseReciboText } = await import('@/lib/recibo-parser');
+      const data = parseReciboText(text);
 
       if (data) {
         if (data.documentType === 'recibo' && data.documentNumber && data.providerName && data.issueDate && data.baseAmount) {
           const base = Number(data.baseAmount) || 0;
           const ir = data.irRetentionAmount ? Number(data.irRetentionAmount) : 0;
           const total = data.totalAmount ? Number(data.totalAmount) : (base - ir);
-          
+
+          // RUC personal 10XXXXXXXXY ↔ DNI XXXXXXXX: mismo profesional
+          const scannedDoc = data.ruc ?? '';
+          const scannedDni =
+            scannedDoc.length === 11 && scannedDoc.startsWith('10')
+              ? scannedDoc.slice(2, 10)
+              : null;
+
+          const duplicate = expenses.find(
+            (e) =>
+              e.documentNumber === String(data.documentNumber) &&
+              (e.providerDocument === scannedDoc ||
+                (scannedDni !== null && e.providerDocument === scannedDni)),
+          );
+          if (duplicate) {
+            setFormError(
+              `El recibo ${data.documentSeries ? `${data.documentSeries}-` : ''}${data.documentNumber} de ${duplicate.providerName} ya está registrado.`,
+            );
+            return;
+          }
+
+          // Reusar el nombre canónico del socio/proveedor si ya existe
+          const partnerMatch = partners.find(
+            (p) =>
+              p.documentNumber === scannedDoc ||
+              (scannedDni !== null && p.documentNumber === scannedDni),
+          );
+          const knownProvider = expenses.find(
+            (e) =>
+              e.providerDocument === scannedDoc ||
+              (scannedDni !== null && e.providerDocument === scannedDni),
+          );
+
           const result = await insertExpense({
             documentType: 'recibo',
             documentSeries: data.documentSeries || null,
             documentNumber: data.documentNumber,
             issueDate: data.issueDate,
             dueDate: data.dueDate || data.issueDate,
-            providerName: data.providerName,
+            providerName: partnerMatch?.name ?? knownProvider?.providerName ?? data.providerName,
+            partnerId: partnerMatch?.id ?? null,
             providerDocument: data.ruc || null,
             concept: data.description || 'Servicios profesionales',
             paymentMethod: 'transferencia',
