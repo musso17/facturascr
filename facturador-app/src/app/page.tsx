@@ -29,6 +29,7 @@ import {
 } from 'recharts';
 import { useInvoices } from '@/hooks/use-invoices';
 import { useExpenses } from '@/hooks/use-expenses';
+import { useManagementIncomes } from '@/hooks/use-management-incomes';
 import {
   asLocalDate, summarizeInvoices,
   filterByMonth, shortenName
@@ -51,6 +52,7 @@ const dateFormatter = new Intl.DateTimeFormat('es-PE', {
 export default function DashboardPage() {
   const { invoices, isLoading, syncError, refresh } = useInvoices();
   const { expenses } = useExpenses();
+  const { incomes: otherIncomes } = useManagementIncomes();
   const [selectedMonth, setSelectedMonth] = useState('todos');
   const [refreshState, setRefreshState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const monthOptions = useMemo(() => buildMonthOptions(invoices), [invoices]);
@@ -128,12 +130,18 @@ export default function DashboardPage() {
     [filteredInvoices],
   );
 
+  // Otros ingresos (gestión): impactan utilidad y caja, nunca los cálculos fiscales
+  const scopeOtherIncomes = useMemo(
+    () => filterByMonth(otherIncomes, selectedMonth).reduce((s, i) => s + i.amount, 0),
+    [otherIncomes, selectedMonth],
+  );
+
   const cajaReal =
-    totals.pagado - expenseSummary.paid - scopeIgvPayable - scopeRentaPayment;
+    totals.pagado + scopeOtherIncomes - expenseSummary.paid - scopeIgvPayable - scopeRentaPayment;
 
   const projection = useMemo(
-    () => buildThirtyDayProjection(invoices, expenses),
-    [invoices, expenses],
+    () => buildThirtyDayProjection(invoices, expenses, otherIncomes),
+    [invoices, expenses, otherIncomes],
   );
 
   const metricCards = [
@@ -160,19 +168,25 @@ export default function DashboardPage() {
     },
     {
       label: 'Utilidad devengada',
-      value: totals.facturado - expenseSummary.total,
-      hint: 'Facturado − gastos (no es caja)',
+      value: totals.facturado + scopeOtherIncomes - expenseSummary.total,
+      hint:
+        scopeOtherIncomes > 0
+          ? `Incluye ${formatCurrencyNoDecimals(scopeOtherIncomes)} de otros ingresos`
+          : 'Facturado − gastos (no es caja)',
       accent: 'bg-purple-50 text-purple-600',
-      tooltip: 'Base devengada: incluye lo aún no cobrado y no descuenta impuestos',
+      tooltip: 'Base devengada: facturado más otros ingresos de gestión, menos gastos',
       delta: hasMonthlySelection ? percentChange(currentStats?.net ?? 0, previousStats?.net ?? 0) : null,
     },
     {
       label: 'Caja real',
       value: cajaReal,
-      hint: 'Cobrado − pagado − IGV − renta 1%',
+      hint:
+        scopeOtherIncomes > 0
+          ? `Incluye ${formatCurrencyNoDecimals(scopeOtherIncomes)} de otros ingresos`
+          : 'Cobrado − pagado − IGV − renta 1%',
       accent: 'bg-teal-50 text-teal-600',
       tooltip:
-        'Posición real de caja del período: cobros efectivos menos pagos efectivos, IGV por pagar y pago a cuenta de renta (1%)',
+        'Posición real de caja del período: cobros efectivos más otros ingresos, menos pagos efectivos, IGV por pagar y pago a cuenta de renta (1%)',
       delta: null,
     },
   ];
@@ -778,16 +792,21 @@ type ProjectionExpense = {
   status: string;
 };
 
-function buildThirtyDayProjection(invoices: InvoiceRecord[], expenses: ProjectionExpense[]) {
+function buildThirtyDayProjection(
+  invoices: InvoiceRecord[],
+  expenses: ProjectionExpense[],
+  otherIncomes: { amount: number }[] = [],
+) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const horizon = new Date(today);
   horizon.setDate(horizon.getDate() + 30);
   const horizonDate = horizon.toISOString().slice(0, 10);
 
-  // Caja acumulada real: todo lo cobrado menos todo lo pagado en la historia
+  // Caja acumulada real: cobrado + otros ingresos de gestión − pagado
   const cashToday =
-    invoices.reduce((s, inv) => s + inv.paid, 0) -
+    invoices.reduce((s, inv) => s + inv.paid, 0) +
+    otherIncomes.reduce((s, i) => s + i.amount, 0) -
     expenses.reduce((s, e) => s + e.paidAmount, 0);
 
   // Cobros esperados: facturas con saldo cuyo vencimiento cae dentro de la ventana (incluye vencidas)

@@ -3,6 +3,7 @@
 import { useMemo, useState, ReactNode } from 'react';
 import { useInvoices } from '@/hooks/use-invoices';
 import { useExpenses } from '@/hooks/use-expenses';
+import { useManagementIncomes } from '@/hooks/use-management-incomes';
 import { usePartners } from '@/hooks/use-partners';
 import { asLocalDate, filterByMonth, shortenName } from '@/lib/accounting-service';
 import type {
@@ -45,6 +46,7 @@ const CATEGORY_ICONS: Record<ExpenseCategory, ReactNode> = {
 export default function ReportesPage() {
   const { invoices } = useInvoices();
   const { expenses } = useExpenses();
+  const { incomes: otherIncomes } = useManagementIncomes();
   const { partners } = usePartners();
   const [marginPeriod, setMarginPeriod] = useState('todos');
 
@@ -67,9 +69,10 @@ export default function ReportesPage() {
       buildClientMargins(
         filterByMonth(invoices, marginPeriod),
         filterByMonth(expenses, marginPeriod),
+        filterByMonth(otherIncomes, marginPeriod),
         partners,
       ),
-    [invoices, expenses, partners, marginPeriod],
+    [invoices, expenses, otherIncomes, partners, marginPeriod],
   );
 
   const unassignedExpenses = useMemo(() => {
@@ -291,6 +294,7 @@ function buildMonthlyOverview(
 function buildClientMargins(
   invoices: InvoiceRecord[],
   expenses: ExpenseRecord[],
+  otherIncomes: { amount: number; clientId?: string | null; clientName?: string | null }[],
   partners: PartnerRecord[],
 ) {
   const map = new Map<string, { key: string; name: string; income: number; expense: number }>();
@@ -318,6 +322,19 @@ function buildClientMargins(
     const name = partner?.name ?? expense.clientName ?? 'Sin cliente';
     const entry = map.get(key) ?? { key, name, income: 0, expense: 0 };
     entry.expense += expense.totalAmount;
+    map.set(key, entry);
+  });
+
+  // Otros ingresos (gestión) con cliente asignado suman al ingreso de ese cliente
+  otherIncomes.forEach((income) => {
+    if (!income.clientId && !income.clientName) return;
+    const partner = income.clientId
+      ? partners.find((p) => p.id === income.clientId)
+      : partners.find((p) => p.name === income.clientName || p.tradeName === income.clientName);
+    const key = partner?.id ?? income.clientName ?? 'sin-cliente';
+    const name = partner?.name ?? income.clientName ?? 'Sin cliente';
+    const entry = map.get(key) ?? { key, name, income: 0, expense: 0 };
+    entry.income += income.amount;
     map.set(key, entry);
   });
 

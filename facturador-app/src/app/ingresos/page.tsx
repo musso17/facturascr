@@ -4,6 +4,7 @@ import { InvoiceFormState, InvoiceRecord, InvoiceStatus } from '@/lib/accounting
 import { asLocalDate, round, summarizeInvoices, shortenName, filterByMonth } from '@/lib/accounting-service';
 import { calcDetraction } from '@/lib/detraction';
 import { useInvoices } from '@/hooks/use-invoices';
+import { useManagementIncomes } from '@/hooks/use-management-incomes';
 import { usePartners } from '@/hooks/use-partners';
 import {
   ChangeEvent,
@@ -25,6 +26,7 @@ import {
   Plus,
   Search,
   TrendingUp,
+  Wallet,
   X,
   Trash2,
 } from 'lucide-react';
@@ -202,6 +204,21 @@ export default function IngresosPage() {
     setDetractionDeposited,
   } = useInvoices();
   const { partners } = usePartners();
+  const {
+    incomes: otherIncomes,
+    tableMissing: otherIncomesTableMissing,
+    insertIncome: insertOtherIncome,
+    deleteIncome: deleteOtherIncome,
+  } = useManagementIncomes();
+  const [isOtherIncomeModalOpen, setIsOtherIncomeModalOpen] = useState(false);
+  const [otherIncomeForm, setOtherIncomeForm] = useState({
+    date: '',
+    amount: '',
+    description: '',
+    clientId: '',
+  });
+  const [otherIncomeError, setOtherIncomeError] = useState<string | null>(null);
+  const [isSavingOtherIncome, setIsSavingOtherIncome] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('todos');
   const [monthFilter, setMonthFilter] = useState('todos');
@@ -306,6 +323,46 @@ export default function IngresosPage() {
     () => summarizeInvoices(filteredInvoices),
     [filteredInvoices],
   );
+
+  const monthScopedOtherIncomes = useMemo(
+    () => filterByMonth(otherIncomes, monthFilter),
+    [otherIncomes, monthFilter],
+  );
+  const otherIncomesTotal = useMemo(
+    () => monthScopedOtherIncomes.reduce((s, i) => s + i.amount, 0),
+    [monthScopedOtherIncomes],
+  );
+
+  const handleSaveOtherIncome = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const amount = Number(otherIncomeForm.amount);
+    if (!otherIncomeForm.date || !amount || amount <= 0 || !otherIncomeForm.description.trim()) {
+      setOtherIncomeError('Completa fecha, monto y descripción.');
+      return;
+    }
+    setIsSavingOtherIncome(true);
+    const client = partners.find((p) => p.id === otherIncomeForm.clientId);
+    const result = await insertOtherIncome({
+      issueDate: otherIncomeForm.date,
+      amount,
+      description: otherIncomeForm.description.trim(),
+      clientId: otherIncomeForm.clientId || null,
+      clientName: client?.name ?? null,
+    });
+    if (result.error) {
+      setOtherIncomeError(result.error);
+    } else {
+      setOtherIncomeError(null);
+      setOtherIncomeForm({ date: '', amount: '', description: '', clientId: '' });
+      setIsOtherIncomeModalOpen(false);
+    }
+    setIsSavingOtherIncome(false);
+  };
+
+  const handleDeleteOtherIncome = async (id: string) => {
+    if (!window.confirm('¿Eliminar este ingreso de gestión?')) return;
+    await deleteOtherIncome(id);
+  };
 
   const handleClientInput = (value: string) => {
     const sanitized = value.trim();
@@ -544,6 +601,17 @@ export default function IngresosPage() {
               <button onClick={() => setIsPaymentModalOpen(true)} className="px-4 py-2 text-sm font-medium bg-white border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 transition-colors">
                 Registrar Pago
               </button>
+              <button
+                onClick={() => {
+                  setOtherIncomeError(null);
+                  setIsOtherIncomeModalOpen(true);
+                }}
+                className="flex items-center gap-2 px-4 py-2 text-sm font-medium bg-teal-50 border border-teal-200 text-teal-700 rounded-lg hover:bg-teal-100 transition-colors"
+                title="Ingreso de gestión: impacta la utilidad, no los módulos fiscales"
+              >
+                <Wallet className="w-4 h-4" />
+                Otro ingreso
+              </button>
               <button onClick={() => {
                 setForm(INITIAL_FORM);
                 setEditingInvoiceRecordId(null);
@@ -617,6 +685,44 @@ export default function IngresosPage() {
                 );
               })}
             </div>
+          </section>
+        )}
+
+        {monthScopedOtherIncomes.length > 0 && (
+          <section className="rounded-xl border border-teal-200 bg-white shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 border-b border-teal-100">
+              <h2 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-teal-700">
+                <Wallet className="h-4 w-4" />
+                Otros ingresos (gestión) — no fiscales
+              </h2>
+              <p className="text-sm font-bold text-teal-700">{formatCurrency(otherIncomesTotal)}</p>
+            </div>
+            <ul className="divide-y divide-slate-100">
+              {monthScopedOtherIncomes.map((income) => (
+                <li key={income.id} className="flex flex-wrap items-center justify-between gap-3 px-5 py-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-slate-800">{income.description}</p>
+                    <p className="text-xs text-slate-500">
+                      {formatDate(income.issueDate)}
+                      {income.clientName && <> · {income.clientName}</>}
+                      <span className="ml-2 inline-flex items-center rounded-full bg-teal-50 px-2 py-0.5 text-[10px] font-bold uppercase text-teal-700">
+                        Gestión
+                      </span>
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="font-bold text-slate-900">{formatCurrency(income.amount)}</span>
+                    <button
+                      onClick={() => handleDeleteOtherIncome(income.id)}
+                      className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                      title="Eliminar"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
           </section>
         )}
 
@@ -1008,6 +1114,78 @@ export default function IngresosPage() {
             disabled={isSavingInvoice}
           >
             {isSavingInvoice ? 'Guardando...' : 'Guardar factura'}
+          </button>
+        </form>
+      </Modal>
+
+      <Modal
+        isOpen={isOtherIncomeModalOpen}
+        onClose={() => setIsOtherIncomeModalOpen(false)}
+        title="Registrar Otro Ingreso (Gestión)"
+      >
+        <div className="mt-2 rounded-lg bg-teal-50 border border-teal-100 px-3 py-2 text-xs text-teal-800">
+          Este ingreso impacta la utilidad, la caja real y el reparto de utilidades, pero{' '}
+          <strong>no</strong> aparece en facturación ni en los cálculos de impuestos (IGV/renta).
+        </div>
+        {otherIncomesTableMissing && (
+          <div className="mt-3 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800">
+            Falta crear la tabla en Supabase: ejecuta{' '}
+            <code className="rounded bg-amber-100 px-1 font-mono">supabase/migration-otros-ingresos.sql</code>{' '}
+            en el SQL Editor y recarga.
+          </div>
+        )}
+        <form className="mt-4 space-y-4" onSubmit={handleSaveOtherIncome}>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <InputField
+              label="Fecha"
+              type="date"
+              value={otherIncomeForm.date}
+              onChange={(value) => setOtherIncomeForm((prev) => ({ ...prev, date: value }))}
+              required
+            />
+            <InputField
+              label="Monto (S/)"
+              type="number"
+              step="0.01"
+              value={otherIncomeForm.amount}
+              onChange={(value) => setOtherIncomeForm((prev) => ({ ...prev, amount: value }))}
+              placeholder="3675.00"
+              required
+            />
+          </div>
+          <InputField
+            label="Descripción"
+            value={otherIncomeForm.description}
+            onChange={(value) => setOtherIncomeForm((prev) => ({ ...prev, description: value }))}
+            placeholder="Origen del ingreso"
+            required
+          />
+          <label className="text-sm font-medium text-slate-600">
+            Cliente (opcional — para margen por cliente)
+            <select
+              value={otherIncomeForm.clientId}
+              onChange={(event) =>
+                setOtherIncomeForm((prev) => ({ ...prev, clientId: event.target.value }))
+              }
+              className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-blue-500"
+            >
+              <option value="">— Sin asignar —</option>
+              {clientOptions.map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          {otherIncomeError && (
+            <p className="text-sm font-medium text-rose-600">{otherIncomeError}</p>
+          )}
+          <button
+            type="submit"
+            className="w-full rounded-lg bg-teal-600 py-3 text-center text-sm font-semibold text-white shadow-sm transition hover:bg-teal-700 disabled:opacity-60"
+            disabled={isSavingOtherIncome || otherIncomesTableMissing}
+          >
+            {isSavingOtherIncome ? 'Guardando...' : 'Registrar ingreso de gestión'}
           </button>
         </form>
       </Modal>

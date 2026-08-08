@@ -235,6 +235,26 @@ export interface LiquidationRecord {
   createdAt?: string | null;
 }
 
+// Ingreso de gestión: impacta utilidad y caja, nunca los módulos fiscales
+export interface ManagementIncomeRecord {
+  id: string;
+  issueDate: string; // income_date, nombrado así para reusar filterByMonth
+  amount: number;
+  description: string;
+  clientId?: string | null;
+  clientName?: string | null;
+}
+
+export interface SupabaseManagementIncomeRow {
+  id: string;
+  income_date: string;
+  amount: number;
+  description: string;
+  client_id: string | null;
+  client_name: string | null;
+  created_at?: string | null;
+}
+
 export interface SupabaseLiquidationRow {
   id: string;
   period: string;

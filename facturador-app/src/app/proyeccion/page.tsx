@@ -4,6 +4,7 @@ import { useState, useMemo, useEffect } from 'react';
 import { useInvoices } from '@/hooks/use-invoices';
 import { useExpenses } from '@/hooks/use-expenses';
 import { useLiquidations } from '@/hooks/use-liquidations';
+import { useManagementIncomes } from '@/hooks/use-management-incomes';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import {
@@ -31,6 +32,7 @@ import {
 export default function UtilidadesPage() {
   const { invoices } = useInvoices();
   const { expenses } = useExpenses();
+  const { incomes: otherIncomes } = useManagementIncomes();
   const {
     liquidations,
     tableMissing,
@@ -80,6 +82,12 @@ export default function UtilidadesPage() {
           mIncome += inv.paid || 0;
         }
       });
+      // Otros ingresos (gestión): dinero real que entró sin comprobante
+      otherIncomes.forEach(income => {
+        if (income.issueDate.startsWith(monthStr)) {
+          mIncome += income.amount;
+        }
+      });
       expenses.forEach(exp => {
         // Para los egresos, usamos la fecha de emisión (devengado)
         // para asegurar que la deuda se reste en el mes en que se contrae.
@@ -111,7 +119,7 @@ export default function UtilidadesPage() {
       totalProfit,
       averageProfit
     };
-  }, [invoices, expenses, selectedMonth]);
+  }, [invoices, expenses, otherIncomes, selectedMonth]);
 
   // Auto-calculation of Excedente (Trimestral)
   const autoExcedente = useMemo(() => {

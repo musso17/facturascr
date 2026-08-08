@@ -12,18 +12,26 @@ export async function GET(req: NextRequest) {
     const supabase = serverSupabase();
     const year = String(new Date().getFullYear());
 
-    const [invoicesRes, expensesRes] = await Promise.all([
+    const [invoicesRes, expensesRes, otherIncomesRes] = await Promise.all([
       supabase.from('invoices').select('*'),
       supabase.from('expenses').select('*'),
+      supabase.from('management_incomes').select('income_date,amount'),
     ]);
     if (invoicesRes.error) throw invoicesRes.error;
     if (expensesRes.error) throw expensesRes.error;
 
     const invoices = ((invoicesRes.data ?? []) as SupabaseInvoiceRow[]).map(mapInvoiceRow);
     const expenses = (expensesRes.data ?? []) as SupabaseExpenseRow[];
+    // Tolerante a tabla ausente (migración opcional)
+    const otherIncomesRows = otherIncomesRes.error
+      ? []
+      : ((otherIncomesRes.data ?? []) as { income_date: string; amount: number }[]);
 
     const yearInvoices = invoices.filter((inv) => inv.issueDate.startsWith(year));
     const yearExpenses = expenses.filter((e) => e.issue_date.startsWith(year));
+    const otrosIngresos = otherIncomesRows
+      .filter((i) => i.income_date.startsWith(year))
+      .reduce((s, i) => s + (Number(i.amount) || 0), 0);
 
     const totals = summarizeInvoices(yearInvoices);
     const gastos = yearExpenses.reduce((s, e) => s + (e.total_amount || 0), 0);
@@ -35,8 +43,10 @@ export async function GET(req: NextRequest) {
     const igvVentas = yearInvoices.reduce((s, inv) => s + (inv.total - inv.amount), 0);
     const igvCompras = yearExpenses.reduce((s, e) => s + (e.igv_amount || 0), 0);
     const igvPorPagar = Math.max(0, igvVentas - igvCompras);
+    // Los otros ingresos de gestión no entran al IGV ni al pago a cuenta de renta
     const pagoCuentaRenta = yearInvoices.reduce((s, inv) => s + inv.amount, 0) * 0.01;
-    const cajaReal = totals.pagado - gastosPagados - igvPorPagar - pagoCuentaRenta;
+    const cajaReal =
+      totals.pagado + otrosIngresos - gastosPagados - igvPorPagar - pagoCuentaRenta;
 
     const vencidas = yearInvoices
       .filter((inv) => inv.status === 'Vencido')
@@ -63,7 +73,8 @@ export async function GET(req: NextRequest) {
         pendiente: Math.max(gastos - gastosPagados, 0),
         registros: yearExpenses.length,
       },
-      utilidadDevengada: totals.facturado - gastos,
+      otrosIngresosGestion: otrosIngresos,
+      utilidadDevengada: totals.facturado + otrosIngresos - gastos,
       cajaReal,
       impuestos: {
         igvVentas,
