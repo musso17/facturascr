@@ -2,17 +2,18 @@ import { createClient } from '@supabase/supabase-js';
 import { NextRequest, NextResponse } from 'next/server';
 
 /**
- * Autenticación por token para la API de solo lectura (P8).
+ * Autenticación por token para la API de solo lectura (P8) y el servidor MCP.
  * El token vive en REPORT_API_TOKEN (env). Se acepta:
  *   - Authorization: Bearer <token>
  *   - x-api-token: <token>
+ *   - ?token=<token>  (para el conector MCP, cuyo campo de URL no admite headers)
  */
 export function checkApiToken(req: NextRequest): boolean {
   const expected = process.env.REPORT_API_TOKEN;
   if (!expected) return false;
   const auth = req.headers.get('authorization') ?? '';
   const bearer = auth.startsWith('Bearer ') ? auth.slice(7).trim() : null;
-  const token = bearer ?? req.headers.get('x-api-token');
+  const token = bearer ?? req.headers.get('x-api-token') ?? req.nextUrl.searchParams.get('token');
   return token === expected;
 }
 
