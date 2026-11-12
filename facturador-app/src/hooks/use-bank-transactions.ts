@@ -35,6 +35,22 @@ export function useBankTransactions() {
   const [transactions, setTransactions] = useState<BankTransaction[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [syncError, setSyncError] = useState<string | null>(null);
+  // Facturas que ya están ligadas a un movimiento del banco
+  const [reconciledInvoiceIds, setReconciledInvoiceIds] = useState<Set<string>>(new Set());
+
+  const loadReconciliations = useCallback(async () => {
+    const { data, error } = await supabase
+      .from('reconciliations')
+      .select('invoice_id')
+      .not('invoice_id', 'is', null);
+    if (error) {
+      console.error(error);
+      return;
+    }
+    setReconciledInvoiceIds(
+      new Set((data ?? []).map((row: { invoice_id: string }) => row.invoice_id)),
+    );
+  }, []);
 
   const loadTransactions = useCallback(async () => {
     setIsLoading(true);
@@ -57,8 +73,55 @@ export function useBankTransactions() {
   }, []);
 
   useEffect(() => {
-    void loadTransactions();
-  }, [loadTransactions]);
+    const handle = setTimeout(() => {
+      void loadTransactions();
+      void loadReconciliations();
+    }, 0);
+    return () => clearTimeout(handle);
+  }, [loadTransactions, loadReconciliations]);
+
+  // ─── Conciliar un abono con una o varias facturas ──────────────────
+
+  const reconcileCredit = useCallback(
+    async (
+      transactionId: string,
+      allocations: { invoiceId: string; appliedAmount: number }[],
+      meta: { matchType: 'exact' | 'sum' | 'manual'; confidence: number | null; notes?: string },
+    ): Promise<{ error?: string }> => {
+      const { error } = await supabase.from('reconciliations').insert(
+        allocations.map((allocation) => ({
+          bank_transaction_id: transactionId,
+          invoice_id: allocation.invoiceId,
+          applied_amount: allocation.appliedAmount,
+          match_type: meta.matchType,
+          match_confidence: meta.confidence,
+          notes: meta.notes ?? null,
+        })),
+      );
+      if (error) {
+        console.error(error);
+        return { error: 'No se pudo guardar la conciliación.' };
+      }
+      const { error: txError } = await supabase
+        .from('bank_transactions')
+        .update({ is_reconciled: true, updated_at: new Date().toISOString() })
+        .eq('id', transactionId);
+      if (txError) {
+        console.error(txError);
+        return { error: 'Se ligó la factura pero no se pudo marcar el movimiento como conciliado.' };
+      }
+      setTransactions((prev) =>
+        prev.map((tx) => (tx.id === transactionId ? { ...tx, isReconciled: true } : tx)),
+      );
+      setReconciledInvoiceIds((prev) => {
+        const next = new Set(prev);
+        allocations.forEach((allocation) => next.add(allocation.invoiceId));
+        return next;
+      });
+      return {};
+    },
+    [],
+  );
 
   // ─── Import from file ──────────────────────────────────────────────
 
@@ -228,8 +291,10 @@ export function useBankTransactions() {
     transactions,
     isLoading,
     syncError,
+    reconciledInvoiceIds,
     refresh: loadTransactions,
     importFromFile,
+    reconcileCredit,
     categorizeTransaction,
     bulkReconcileMonth,
     deleteTransaction,

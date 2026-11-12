@@ -1,11 +1,33 @@
 'use client';
 
-import { InvoiceFormState, InvoiceRecord, InvoiceStatus } from '@/lib/accounting-types';
+import {
+  DetractionStatus,
+  InvoiceFormState,
+  InvoiceRecord,
+  InvoiceStatus,
+} from '@/lib/accounting-types';
 import { asLocalDate, round, summarizeInvoices, shortenName, filterByMonth } from '@/lib/accounting-service';
 import { calcDetraction } from '@/lib/detraction';
+import {
+  DETRACTION_STATUS_LABEL,
+  IGV_RETENTION_RATE,
+  getCollectionBreakdown,
+} from '@/lib/collection';
+import { CollectionModal } from '@/components/ingresos/CollectionModal';
+import {
+  StatementModal,
+  clientKeyFor,
+  findPartnerFor,
+} from '@/components/ingresos/StatementModal';
+import { parseSunatDocument, readXmlFile } from '@/lib/sunat-document';
 import { useInvoices } from '@/hooks/use-invoices';
 import { useManagementIncomes } from '@/hooks/use-management-incomes';
 import { usePartners } from '@/hooks/use-partners';
+import { useSourceDocuments } from '@/hooks/use-source-documents';
+import {
+  DocumentViewerModal,
+  sameDocumentNumber,
+} from '@/components/documents/DocumentViewerModal';
 import {
   ChangeEvent,
   FormEvent,
@@ -23,6 +45,7 @@ import {
   Eye,
   FileText,
   Folder,
+  Mail,
   Plus,
   Search,
   TrendingUp,
@@ -32,11 +55,6 @@ import {
 } from 'lucide-react';
 
 type InvoiceForm = InvoiceFormState;
-
-type PaymentForm = {
-  invoiceId: string;
-  amount: string;
-};
 
 type SortOption = 'fecha' | 'monto' | 'cliente';
 type StatusFilter = 'todos' | InvoiceStatus;
@@ -183,11 +201,10 @@ const INITIAL_FORM: InvoiceForm = {
   vat: '18',
   paid: '',
   detractionDeposited: false,
-};
-
-const INITIAL_PAYMENT_FORM: PaymentForm = {
-  invoiceId: '',
-  amount: '',
+  igvRetention: '',
+  retentionReceipt: '',
+  detractionStatus: null,
+  detractionReceipt: '',
 };
 
 export default function IngresosPage() {
@@ -196,14 +213,24 @@ export default function IngresosPage() {
     isLoading,
     createInvoice,
     createInvoiceFromXML,
-    applyManualPayment,
-    markAsPaid: markInvoiceAsPaid,
+    registerCollection,
     revertPayment,
     updateInvoice,
     deleteInvoice,
-    setDetractionDeposited,
+    setDetractionStatus,
+    collectionColumns,
   } = useInvoices();
   const { partners } = usePartners();
+  const {
+    documents: invoiceDocuments,
+    tableMissing: documentsTableMissing,
+    fetchDocument,
+    saveDocument,
+  } = useSourceDocuments('invoice');
+  const [viewingInvoiceId, setViewingInvoiceId] = useState<string | null>(null);
+  const viewingInvoice = viewingInvoiceId
+    ? invoices.find((invoice) => invoice.recordId === viewingInvoiceId) ?? null
+    : null;
   const {
     incomes: otherIncomes,
     tableMissing: otherIncomesTableMissing,
@@ -224,21 +251,20 @@ export default function IngresosPage() {
   const [monthFilter, setMonthFilter] = useState('todos');
   const [clientFilter, setClientFilter] = useState('todos');
   const [agingFilter, setAgingFilter] = useState<AgingBucket | null>(null);
+  const [detractionFilter, setDetractionFilter] = useState<'sin_verificar' | DetractionStatus | null>(null);
   const [sortBy] = useState<SortOption>('fecha');
   const [form, setForm] = useState<InvoiceForm>(INITIAL_FORM);
-  const [paymentForm, setPaymentForm] = useState<PaymentForm>(
-    INITIAL_PAYMENT_FORM,
-  );
   const [formError, setFormError] = useState<string | null>(null);
-  const [paymentError, setPaymentError] = useState<string | null>(null);
   const [isSavingInvoice, setIsSavingInvoice] = useState(false);
-  const [isSavingPayment, setIsSavingPayment] = useState(false);
   const [isUploadingXML, setIsUploadingXML] = useState(false);
   const [xmlUploadError, setXmlUploadError] = useState<string | null>(null);
   const [xmlUploadMessage, setXmlUploadMessage] = useState<string | null>(null);
   const [busyInvoiceId, setBusyInvoiceId] = useState<string | null>(null);
   const [isInvoiceModalOpen, setIsInvoiceModalOpen] = useState(false);
-  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
+  // null = cerrado; '' = abierto sin factura elegida
+  const [collectingInvoiceId, setCollectingInvoiceId] = useState<string | null>(null);
+  const [isStatementOpen, setIsStatementOpen] = useState(false);
+  const [statementClientKey, setStatementClientKey] = useState<string | null>(null);
   const [editingInvoiceRecordId, setEditingInvoiceRecordId] = useState<string | null>(null);
   const xmlInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -269,6 +295,12 @@ export default function IngresosPage() {
           : invoice.status === 'Vencido' && getAgingBucket(getDaysOverdue(invoice)) === agingFilter,
       )
       .filter((invoice) => {
+        if (detractionFilter === null) return true;
+        if (!calcDetraction(invoice.total).applies) return false;
+        if (detractionFilter === 'sin_verificar') return !invoice.detractionStatus;
+        return (invoice.detractionStatus ?? 'pendiente') === detractionFilter;
+      })
+      .filter((invoice) => {
         if (!term) return true;
         const partner = partners.find(p => p.id === invoice.clientId);
         const tradeName = partner?.tradeName?.toLowerCase() ?? '';
@@ -297,7 +329,28 @@ export default function IngresosPage() {
             return asLocalDate(b.issueDate).getTime() - asLocalDate(a.issueDate).getTime();
         }
       });
-  }, [monthScopedInvoices, searchTerm, statusFilter, clientFilter, agingFilter, sortBy, partners]);
+  }, [monthScopedInvoices, searchTerm, statusFilter, clientFilter, agingFilter, detractionFilter, sortBy, partners]);
+
+  // P4: estado real de las detracciones del período
+  const detractionSummary = useMemo(() => {
+    const summary = {
+      sin_verificar: { count: 0, total: 0 },
+      pendiente: { count: 0, total: 0 },
+      depositada: { count: 0, total: 0 },
+      no_aplicada: { count: 0, total: 0 },
+    };
+    for (const invoice of monthScopedInvoices) {
+      const detraction = calcDetraction(invoice.total);
+      if (!detraction.applies) continue;
+      const key = invoice.detractionStatus ?? 'sin_verificar';
+      summary[key].count += 1;
+      summary[key].total += detraction.detractionAmount;
+    }
+    return summary;
+  }, [monthScopedInvoices]);
+
+  const isRetentionAgent = (invoice: InvoiceRecord) =>
+    findPartnerFor(invoice, partners)?.isRetentionAgent ?? false;
 
   // P3: aging de cobranza por tramos
   const agingBuckets = useMemo(() => {
@@ -427,6 +480,10 @@ export default function IngresosPage() {
       vat: invoice.vat.toString(),
       paid: invoice.paid.toString(),
       detractionDeposited: invoice.detractionDeposited ?? false,
+      igvRetention: invoice.igvRetention ? String(invoice.igvRetention) : '',
+      retentionReceipt: invoice.retentionReceipt ?? '',
+      detractionStatus: invoice.detractionStatus ?? null,
+      detractionReceipt: invoice.detractionReceipt ?? '',
     });
     setEditingInvoiceRecordId(invoice.recordId);
     setFormError(null);
@@ -445,66 +502,80 @@ export default function IngresosPage() {
   };
 
 
+  // Acepta varios XML: si la factura no existe la registra; si ya existe, le adjunta el XML
   const handleXMLUpload = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
+    const files = Array.from(event.target.files ?? []);
     event.target.value = '';
-    if (!file) return;
+    if (files.length === 0) return;
     setXmlUploadError(null);
     setXmlUploadMessage(null);
     setIsUploadingXML(true);
-    try {
-      const xmlContent = await file.text();
-      const result = await createInvoiceFromXML(xmlContent);
-      if (result.error) {
-        setXmlUploadError(result.error);
-      } else if (result.data) {
-        setXmlUploadMessage(`Factura ${result.data.id} registrada correctamente.`);
-        setTimeout(() => setIsInvoiceModalOpen(false), 1500);
+
+    const created: string[] = [];
+    const attached: string[] = [];
+    const skipped: string[] = [];
+    const errors: string[] = [];
+    const prefix = (file: File) => (files.length > 1 ? `${file.name}: ` : '');
+
+    for (const file of files) {
+      try {
+        const xmlContent = await readXmlFile(file);
+        const documentId = parseSunatDocument(xmlContent).id;
+        const existing = invoices.find((invoice) => sameDocumentNumber(invoice.id, documentId));
+
+        if (existing) {
+          if (invoiceDocuments.has(existing.recordId)) {
+            skipped.push(existing.id);
+            continue;
+          }
+          const saved = await saveDocument(existing.recordId, xmlContent, file.name);
+          if (saved.error) errors.push(`${prefix(file)}${saved.error}`);
+          else attached.push(existing.id);
+          continue;
+        }
+
+        const result = await createInvoiceFromXML(xmlContent);
+        if (result.error || !result.data) {
+          errors.push(`${prefix(file)}${result.error ?? 'No se pudo registrar.'}`);
+          continue;
+        }
+        created.push(result.data.id);
+        const saved = await saveDocument(result.data.recordId, xmlContent, file.name);
+        if (saved.error) {
+          errors.push(`${result.data.id} se registró, pero el XML no se guardó: ${saved.error}`);
+        }
+      } catch (error) {
+        console.error(error);
+        errors.push(
+          `${prefix(file)}${error instanceof Error ? error.message : 'No se pudo interpretar el XML.'}`,
+        );
       }
-    } catch (error) {
-      console.error(error);
-      setXmlUploadError(
-        error instanceof Error ? error.message : 'No se pudo interpretar el XML.',
-      );
-    } finally {
-      setIsUploadingXML(false);
+    }
+
+    const summary = [
+      created.length > 0 &&
+        (created.length === 1
+          ? `Factura ${created[0]} registrada correctamente.`
+          : `${created.length} facturas registradas.`),
+      attached.length > 0 &&
+        (attached.length === 1
+          ? `XML adjuntado a la factura ${attached[0]}.`
+          : `XML adjuntado a ${attached.length} facturas existentes.`),
+      skipped.length > 0 &&
+        `${skipped.length === 1 ? `${skipped[0]} ya tenía` : `${skipped.length} facturas ya tenían`} su XML.`,
+    ]
+      .filter(Boolean)
+      .join(' ');
+    setXmlUploadMessage(summary || null);
+    setXmlUploadError(errors.length > 0 ? errors.join('\n') : null);
+    setIsUploadingXML(false);
+    if (errors.length === 0 && (created.length > 0 || attached.length > 0)) {
+      setTimeout(() => setIsInvoiceModalOpen(false), 1500);
     }
   };
 
   const triggerXMLUpload = () => {
     xmlInputRef.current?.click();
-  };
-
-  const handleManualPayment = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (!paymentForm.invoiceId) {
-      setPaymentError('Selecciona una factura.');
-      return;
-    }
-    const amount = Number(paymentForm.amount);
-    if (!amount || amount <= 0) {
-      setPaymentError('Ingresa un monto válido.');
-      return;
-    }
-    setIsSavingPayment(true);
-    const result = await applyManualPayment(paymentForm.invoiceId, amount);
-    if (result.error) {
-      setPaymentError(result.error);
-    } else {
-      setPaymentForm(INITIAL_PAYMENT_FORM);
-      setPaymentError(null);
-      setIsPaymentModalOpen(false);
-    }
-    setIsSavingPayment(false);
-  };
-
-  const handleMarkAsPaid = async (invoiceId: string) => {
-    setBusyInvoiceId(invoiceId);
-    const result = await markInvoiceAsPaid(invoiceId);
-    if (result?.error) {
-      console.error(result.error);
-    }
-    setBusyInvoiceId(null);
   };
 
   const handleRevertPayment = async (invoiceId: string) => {
@@ -524,24 +595,13 @@ export default function IngresosPage() {
     setMonthFilter('todos');
     setClientFilter('todos');
     setAgingFilter(null);
+    setDetractionFilter(null);
   }
 
-  const buildReminder = (invoice: InvoiceRecord) => {
-    const days = getDaysOverdue(invoice);
-    const partner = invoice.clientId
-      ? partners.find((p) => p.id === invoice.clientId)
-      : partners.find((p) => p.name === invoice.client || p.tradeName === invoice.client);
-    const subject = `Recordatorio de pago — Factura ${invoice.id}`;
-    const body = `Estimados,\n\nLes recordamos que la factura ${invoice.id} por ${formatCurrency(invoice.balance)} venció hace ${days} día${days > 1 ? 's' : ''} (${formatDate(invoice.dueDate)}).\n\nAgradecemos programar el pago a la brevedad.\n\nSaludos,\nCerezo`;
-    if (partner?.email) {
-      window.open(
-        `mailto:${partner.email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`,
-        '_blank',
-      );
-    } else {
-      void navigator.clipboard.writeText(`${subject}\n\n${body}`);
-      alert('El cliente no tiene email registrado. Recordatorio copiado al portapapeles.');
-    }
+  // P7: el recordatorio junta todas las facturas pendientes del cliente
+  const openStatement = (clientKey: string | null) => {
+    setStatementClientKey(clientKey);
+    setIsStatementOpen(true);
   };
 
   const summaryCards = [
@@ -598,8 +658,12 @@ export default function IngresosPage() {
                 <Folder className="w-4 h-4" />
                 Facturas en Drive
               </a>
-              <button onClick={() => setIsPaymentModalOpen(true)} className="px-4 py-2 text-sm font-medium bg-white border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 transition-colors">
-                Registrar Pago
+              <button onClick={() => openStatement(clientFilter !== 'todos' ? `p:${clientFilter}` : null)} className="flex items-center gap-2 px-4 py-2 text-sm font-medium bg-white border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 transition-colors" title="Todas las facturas pendientes de un cliente en un solo correo y PDF">
+                <Mail className="w-4 h-4" />
+                Estado de cuenta
+              </button>
+              <button onClick={() => setCollectingInvoiceId('')} className="px-4 py-2 text-sm font-medium bg-white border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 transition-colors">
+                Registrar cobro
               </button>
               <button
                 onClick={() => {
@@ -616,6 +680,8 @@ export default function IngresosPage() {
                 setForm(INITIAL_FORM);
                 setEditingInvoiceRecordId(null);
                 setFormError(null);
+                setXmlUploadError(null);
+                setXmlUploadMessage(null);
                 setIsInvoiceModalOpen(true);
               }} className="flex items-center gap-2 px-4 py-2 text-sm font-medium bg-slate-900 text-white rounded-lg hover:bg-slate-800 transition-colors">
                 <Plus className="w-4 h-4" />
@@ -672,6 +738,51 @@ export default function IngresosPage() {
                     type="button"
                     onClick={() => setAgingFilter(active ? null : bucket)}
                     className={`rounded-xl border p-4 text-left transition-all ${toneMap[tone as keyof typeof toneMap]} ${
+                      active ? 'ring-2 ring-slate-900' : 'hover:shadow-md'
+                    } ${data.count === 0 ? 'opacity-45' : ''}`}
+                  >
+                    <p className="text-xs font-bold uppercase tracking-wide">{label}</p>
+                    <p className="mt-1 text-2xl font-black">{formatCurrencyNoDecimals(data.total)}</p>
+                    <p className="text-xs font-medium">
+                      {data.count} factura{data.count !== 1 ? 's' : ''}
+                      {active ? ' · filtrando' : ''}
+                    </p>
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+        )}
+
+        {detractionSummary.sin_verificar.count +
+          detractionSummary.pendiente.count +
+          detractionSummary.depositada.count +
+          detractionSummary.no_aplicada.count >
+          0 && (
+          <section className="rounded-xl border border-amber-200 bg-white shadow-sm">
+            <div className="flex flex-wrap items-baseline justify-between gap-2 px-5 pt-4 pb-1">
+              <h2 className="text-sm font-bold uppercase tracking-wide text-amber-800">
+                Detracciones — estado real
+              </h2>
+              <p className="text-xs text-slate-500">Toca un estado para filtrar la tabla</p>
+            </div>
+            <div className="grid gap-3 p-4 sm:grid-cols-2 xl:grid-cols-4">
+              {(
+                [
+                  { key: 'sin_verificar', label: 'Sin verificar', tone: 'border-slate-300 bg-slate-50 text-slate-700' },
+                  { key: 'pendiente', label: 'Pendientes de depósito', tone: 'border-amber-200 bg-amber-50 text-amber-800' },
+                  { key: 'no_aplicada', label: 'No aplicadas (pagó el total)', tone: 'border-orange-200 bg-orange-50 text-orange-800' },
+                  { key: 'depositada', label: 'Depositadas', tone: 'border-emerald-200 bg-emerald-50 text-emerald-800' },
+                ] as const
+              ).map(({ key, label, tone }) => {
+                const data = detractionSummary[key];
+                const active = detractionFilter === key;
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => setDetractionFilter(active ? null : key)}
+                    className={`rounded-xl border p-4 text-left transition-all ${tone} ${
                       active ? 'ring-2 ring-slate-900' : 'hover:shadow-md'
                     } ${data.count === 0 ? 'opacity-45' : ''}`}
                   >
@@ -793,7 +904,6 @@ export default function IngresosPage() {
                       const dueDateInfo = getDueDateInfo(invoice.dueDate, invoice.status);
                       const daysOverdue = getDaysOverdue(invoice);
                       const isCritical = daysOverdue > 30;
-                      const detraction = calcDetraction(invoice.total);
                       let partner = null;
                       if (invoice.clientId) {
                         partner = partners.find((p) => p.id === invoice.clientId);
@@ -804,6 +914,9 @@ export default function IngresosPage() {
                       }
                       const displayName = partner?.name ?? invoice.client;
                       const displayRuc = partner?.documentNumber ?? invoice.ruc;
+                      const breakdown = getCollectionBreakdown(invoice, {
+                        isRetentionAgent: partner?.isRetentionAgent,
+                      });
                       return (
                         <tr
                           key={invoice.recordId || invoice.id}
@@ -814,10 +927,24 @@ export default function IngresosPage() {
                           }`}
                         >
                           <td className="px-4 py-4 whitespace-nowrap">
-                            <div className="flex items-center gap-2">
-                              <FileText className="w-3.5 h-3.5 text-slate-400" />
-                              <span className="text-slate-900 font-semibold">{invoice.id}</span>
-                            </div>
+                            <button
+                              type="button"
+                              onClick={() => setViewingInvoiceId(invoice.recordId)}
+                              className="flex items-center gap-2 rounded text-left hover:text-blue-700"
+                              title="Ver factura"
+                            >
+                              <FileText
+                                className={`w-3.5 h-3.5 ${invoiceDocuments.has(invoice.recordId) ? 'text-emerald-600' : 'text-slate-400'}`}
+                              />
+                              <span className="text-slate-900 font-semibold underline-offset-2 hover:text-blue-700 hover:underline">
+                                {invoice.id}
+                              </span>
+                              {invoiceDocuments.has(invoice.recordId) && (
+                                <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700">
+                                  XML
+                                </span>
+                              )}
+                            </button>
                           </td>
                           <td className="px-4 py-4">
                             <div className="flex items-center gap-3">
@@ -859,32 +986,57 @@ export default function IngresosPage() {
                           </td>
                           <td className="px-4 py-4 text-right whitespace-nowrap">
                             <span className="text-slate-900 font-semibold">{formatCurrency(invoice.total)}</span>
-                            {detraction.applies && (
-                              <p className="text-[11px] text-slate-500" title="Detracción SPOT 12% al Banco de la Nación">
-                                Detracción: {formatCurrency(detraction.detractionAmount)}
+                            {/* P3: lo que debe entrar a cada cuenta, también antes del pago */}
+                            {(breakdown.detractionApplies || breakdown.retentionAmount > 0) && (
+                              <p
+                                className="text-[11px] text-slate-500"
+                                title="CC = cuenta corriente · BN = detracción al Banco de la Nación · Ret. = retención IGV 3%"
+                              >
+                                CC <span className="font-semibold text-blue-700">{formatCurrency(breakdown.netToAccount)}</span>
+                                {breakdown.detractionAmount > 0 && <> · BN {formatCurrency(breakdown.detractionAmount)}</>}
+                                {breakdown.retentionAmount > 0 && (
+                                  <> · Ret. {formatCurrency(breakdown.retentionAmount)}{breakdown.retentionIsEstimate ? ' (est.)' : ''}</>
+                                )}
                               </p>
                             )}
                           </td>
                           <td className="px-4 py-4 text-right whitespace-nowrap">
                             <span className="text-green-600 font-medium">{formatCurrency(invoice.paid)}</span>
-                            {detraction.applies && invoice.status === 'Pagado' && (
-                              <p className="text-[11px] text-slate-500">
-                                CC {formatCurrency(detraction.netAmount)} · BN{' '}
-                                {formatCurrency(detraction.detractionAmount)}
+                            {invoice.paid > 0 && (invoice.paymentAccount || invoice.paymentDate) && (
+                              <p className="text-[11px] text-slate-500" title={invoice.paymentReference ? `Operación ${invoice.paymentReference}` : undefined}>
+                                {[invoice.paymentAccount, invoice.paymentDate ? formatDate(invoice.paymentDate) : null]
+                                  .filter(Boolean)
+                                  .join(' · ')}
                               </p>
                             )}
-                            {detraction.applies && (
-                              <label className="mt-1 flex items-center justify-end gap-1.5 text-[11px] font-medium text-slate-600">
-                                <input
-                                  type="checkbox"
-                                  checked={invoice.detractionDeposited ?? false}
-                                  onChange={(e) =>
-                                    void setDetractionDeposited(invoice.recordId, e.target.checked)
-                                  }
-                                  className="h-3.5 w-3.5 rounded border-slate-300 text-blue-600"
-                                />
-                                Detracción depositada
-                              </label>
+                            {/* P4: estado real de la detracción, no una etiqueta fija */}
+                            {breakdown.detractionApplies && (
+                              <select
+                                value={invoice.detractionStatus ?? ''}
+                                onChange={(event) =>
+                                  void setDetractionStatus(
+                                    invoice.recordId,
+                                    event.target.value as DetractionStatus,
+                                  )
+                                }
+                                title={invoice.detractionReceipt ? `Constancia BN ${invoice.detractionReceipt}` : 'Estado de la detracción'}
+                                className={`mt-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold outline-none ${
+                                  invoice.detractionStatus === 'depositada'
+                                    ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                                    : invoice.detractionStatus === 'no_aplicada'
+                                      ? 'border-orange-200 bg-orange-50 text-orange-700'
+                                      : invoice.detractionStatus === 'pendiente'
+                                        ? 'border-amber-200 bg-amber-50 text-amber-800'
+                                        : 'border-slate-300 bg-white text-slate-500'
+                                }`}
+                              >
+                                {!invoice.detractionStatus && <option value="">Detracción sin verificar</option>}
+                                {(Object.keys(DETRACTION_STATUS_LABEL) as DetractionStatus[]).map((status) => (
+                                  <option key={status} value={status}>
+                                    Detracción {DETRACTION_STATUS_LABEL[status].toLowerCase()}
+                                  </option>
+                                ))}
+                              </select>
                             )}
                           </td>
                           <td className="px-4 py-4 text-right whitespace-nowrap">
@@ -896,7 +1048,7 @@ export default function IngresosPage() {
                           <td className="px-4 py-4 text-right whitespace-nowrap">
                             {isCritical && (
                               <button
-                                onClick={() => buildReminder(invoice)}
+                                onClick={() => openStatement(clientKeyFor(invoice, partners))}
                                 className="mb-1.5 inline-flex items-center gap-1 rounded-lg bg-red-600 px-3 py-1.5 text-xs font-bold text-white shadow-sm hover:bg-red-700 transition-colors"
                                 title={`Vencida hace ${daysOverdue} días — enviar recordatorio`}
                               >
@@ -907,13 +1059,16 @@ export default function IngresosPage() {
                             <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                               {invoice.status === 'Vencido' && !isCritical && (
                                 <button
-                                  onClick={() => buildReminder(invoice)}
+                                  onClick={() => openStatement(clientKeyFor(invoice, partners))}
                                   className="px-3 py-1.5 bg-amber-100 hover:bg-amber-200 text-amber-800 rounded-lg text-xs font-semibold transition-colors"
                                   title="Enviar recordatorio de pago"
                                 >
                                   Recordatorio
                                 </button>
                               )}
+                              <button onClick={() => setViewingInvoiceId(invoice.recordId)} className="p-1.5 text-slate-400 hover:text-blue-600 rounded bg-slate-50 hover:bg-blue-50 transition-colors" title="Ver factura">
+                                <Eye className="w-4 h-4" />
+                              </button>
                               <button onClick={() => handleEditInvoice(invoice)} disabled={busyInvoiceId === invoice.recordId} className="p-1.5 text-slate-400 hover:text-blue-600 rounded bg-slate-50 hover:bg-blue-50 transition-colors" title="Editar">
                                 <Edit2 className="w-4 h-4" />
                               </button>
@@ -921,8 +1076,8 @@ export default function IngresosPage() {
                                 <Trash2 className="w-4 h-4" />
                               </button>
                               {invoice.status !== 'Pagado' ? (
-                                <button onClick={() => handleMarkAsPaid(invoice.recordId)} disabled={busyInvoiceId === invoice.recordId} className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold transition-colors">
-                                  Marcar pagado
+                                <button onClick={() => setCollectingInvoiceId(invoice.recordId)} disabled={busyInvoiceId === invoice.recordId} className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold transition-colors">
+                                  Registrar cobro
                                 </button>
                               ) : (
                                 <button onClick={() => handleRevertPayment(invoice.recordId)} disabled={busyInvoiceId === invoice.recordId} className="px-3 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg text-xs font-semibold transition-colors">
@@ -953,6 +1108,9 @@ export default function IngresosPage() {
               <p className="text-sm font-semibold uppercase tracking-wide text-slate-300">
                 Importar XML (SUNAT)
               </p>
+              <p className="mt-0.5 text-xs text-slate-400">
+                Puedes elegir varios. Si la factura ya existe, se le adjunta el XML.
+              </p>
             </div>
             <button
               type="button"
@@ -967,12 +1125,18 @@ export default function IngresosPage() {
             <p className="mt-3 text-sm font-semibold text-emerald-300">{xmlUploadMessage}</p>
           )}
           {xmlUploadError && (
-            <p className="mt-3 text-sm font-semibold text-rose-300">{xmlUploadError}</p>
+            <p className="mt-3 whitespace-pre-line text-sm font-semibold text-rose-300">{xmlUploadError}</p>
+          )}
+          {documentsTableMissing && (
+            <p className="mt-3 text-xs text-amber-300">
+              El XML original no se guardará hasta ejecutar supabase/migration-documentos.sql en Supabase.
+            </p>
           )}
           <input
             ref={xmlInputRef}
             type="file"
-            accept=".xml"
+            accept=".xml,text/xml,application/xml"
+            multiple
             className="sr-only"
             onChange={handleXMLUpload}
           />
@@ -1069,38 +1233,108 @@ export default function IngresosPage() {
             const estimatedTotal = round(
               (Number(form.amount) || 0) * (1 + (Number(form.vat) || 0) / 100),
             );
-            const detraction = calcDetraction(estimatedTotal);
+            const formBreakdown = getCollectionBreakdown({
+              total: estimatedTotal,
+              igvRetention: Number(form.igvRetention) || 0,
+              detractionStatus: form.detractionStatus ?? null,
+            });
+            const fieldClass =
+              'mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-blue-500 disabled:bg-slate-100';
             return (
-              <div className="rounded-xl bg-slate-50 p-3 text-sm text-slate-600 space-y-2">
+              <div className="rounded-xl bg-slate-50 p-3 text-sm text-slate-600 space-y-3">
                 <p>
                   Total estimado:{' '}
                   <span className="font-semibold text-slate-900">{formatCurrency(estimatedTotal)}</span>
+                  {' · '}a cuenta corriente{' '}
+                  <span className="font-semibold text-blue-700">
+                    {formatCurrency(formBreakdown.netToAccount)}
+                  </span>
                 </p>
-                {detraction.applies && (
-                  <>
-                    <p className="text-xs text-slate-500">
-                      Sujeta a detracción SPOT (12%): el cliente deposita{' '}
-                      <span className="font-semibold text-slate-700">
-                        {formatCurrency(detraction.detractionAmount)}
-                      </span>{' '}
-                      al Banco de la Nación y recibes{' '}
-                      <span className="font-semibold text-slate-700">
-                        {formatCurrency(detraction.netAmount)}
-                      </span>{' '}
-                      en tu cuenta corriente.
-                    </p>
-                    <label className="flex items-center gap-2 text-xs font-medium text-slate-700">
-                      <input
-                        type="checkbox"
-                        checked={form.detractionDeposited ?? false}
-                        onChange={(e) =>
-                          setForm((prev) => ({ ...prev, detractionDeposited: e.target.checked }))
+                {formBreakdown.detractionApplies ? (
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <label className="block text-xs font-medium text-slate-600">
+                      Detracción 12% ({formatCurrency(calcDetraction(estimatedTotal).detractionAmount)})
+                      <select
+                        value={form.detractionStatus ?? ''}
+                        onChange={(event) =>
+                          setForm((prev) => ({
+                            ...prev,
+                            detractionStatus: (event.target.value || null) as DetractionStatus | null,
+                          }))
                         }
-                        className="h-4 w-4 rounded border-slate-300 text-blue-600"
-                      />
-                      Detracción ya depositada en el BN
+                        className={fieldClass}
+                      >
+                        <option value="">Sin verificar</option>
+                        {(Object.keys(DETRACTION_STATUS_LABEL) as DetractionStatus[]).map((status) => (
+                          <option key={status} value={status}>
+                            {DETRACTION_STATUS_LABEL[status]}
+                          </option>
+                        ))}
+                      </select>
                     </label>
-                  </>
+                    <label className="block text-xs font-medium text-slate-600">
+                      N° constancia BN
+                      <input
+                        value={form.detractionReceipt ?? ''}
+                        onChange={(event) =>
+                          setForm((prev) => ({ ...prev, detractionReceipt: event.target.value }))
+                        }
+                        disabled={!collectionColumns}
+                        className={fieldClass}
+                      />
+                    </label>
+                  </div>
+                ) : (
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <label className="block text-xs font-medium text-slate-600">
+                      Retención IGV 3% (si el cliente es agente)
+                      <div className="flex gap-2">
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={form.igvRetention ?? ''}
+                          onChange={(event) =>
+                            setForm((prev) => ({ ...prev, igvRetention: event.target.value }))
+                          }
+                          disabled={!collectionColumns}
+                          placeholder="0.00"
+                          className={fieldClass}
+                        />
+                        <button
+                          type="button"
+                          disabled={!collectionColumns}
+                          onClick={() =>
+                            setForm((prev) => ({
+                              ...prev,
+                              igvRetention: String(round(estimatedTotal * IGV_RETENTION_RATE)),
+                            }))
+                          }
+                          className="mt-1 rounded-lg border border-slate-300 px-2.5 text-xs font-semibold text-slate-700 hover:bg-white disabled:opacity-50"
+                        >
+                          3%
+                        </button>
+                      </div>
+                    </label>
+                    <label className="block text-xs font-medium text-slate-600">
+                      N° comprobante de retención
+                      <input
+                        value={form.retentionReceipt ?? ''}
+                        onChange={(event) =>
+                          setForm((prev) => ({ ...prev, retentionReceipt: event.target.value }))
+                        }
+                        disabled={!collectionColumns}
+                        placeholder="R001-000123"
+                        className={fieldClass}
+                      />
+                    </label>
+                  </div>
+                )}
+                {!collectionColumns && (
+                  <p className="text-xs text-amber-700">
+                    Retención, constancia y &ldquo;no aplicada&rdquo; se guardan tras ejecutar
+                    supabase/migration-cobranza.sql.
+                  </p>
                 )}
               </div>
             );
@@ -1117,6 +1351,68 @@ export default function IngresosPage() {
           </button>
         </form>
       </Modal>
+
+      {viewingInvoice && (
+        <DocumentViewerModal
+          key={viewingInvoice.recordId}
+          recordId={viewingInvoice.recordId}
+          expectedNumber={viewingInvoice.id}
+          tableMissing={documentsTableMissing}
+          fetchDocument={fetchDocument}
+          saveDocument={saveDocument}
+          onClose={() => setViewingInvoiceId(null)}
+          statusSlot={
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-2 rounded-lg border border-slate-200 px-4 py-2.5 text-sm">
+              {STATUS_META[viewingInvoice.status].badge}
+              <span className="text-slate-600">
+                Cobrado{' '}
+                <strong className="text-green-700">{formatCurrency(viewingInvoice.paid)}</strong>
+              </span>
+              <span className="text-slate-600">
+                Saldo{' '}
+                <strong className={viewingInvoice.balance > 0 ? 'text-red-600' : 'text-slate-800'}>
+                  {formatCurrency(viewingInvoice.balance)}
+                </strong>
+              </span>
+              {calcDetraction(viewingInvoice.total).applies && (
+                <span className="text-slate-600">
+                  Detracción{' '}
+                  <strong className="text-slate-800">
+                    {viewingInvoice.detractionStatus
+                      ? DETRACTION_STATUS_LABEL[viewingInvoice.detractionStatus].toLowerCase()
+                      : 'sin verificar'}
+                  </strong>
+                  {viewingInvoice.detractionReceipt && <> · constancia {viewingInvoice.detractionReceipt}</>}
+                </span>
+              )}
+              {(viewingInvoice.igvRetention ?? 0) > 0 && (
+                <span className="text-slate-600">
+                  Retención IGV <strong className="text-slate-800">{formatCurrency(viewingInvoice.igvRetention ?? 0)}</strong>
+                  {viewingInvoice.retentionReceipt && <> · {viewingInvoice.retentionReceipt}</>}
+                </span>
+              )}
+              {viewingInvoice.paymentAccount && (
+                <span className="text-slate-600">
+                  Cobrado en <strong className="text-slate-800">{viewingInvoice.paymentAccount}</strong>
+                </span>
+              )}
+            </div>
+          }
+          fallbackFields={[
+            { label: 'Cliente', value: viewingInvoice.client },
+            { label: 'RUC', value: viewingInvoice.ruc },
+            { label: 'Fecha de emisión', value: formatDate(viewingInvoice.issueDate) },
+            { label: 'Fecha de vencimiento', value: formatDate(viewingInvoice.dueDate) },
+            { label: 'Descripción', value: viewingInvoice.description },
+            { label: 'Base imponible', value: formatCurrency(viewingInvoice.amount) },
+            {
+              label: `IGV (${viewingInvoice.vat}%)`,
+              value: formatCurrency(round(viewingInvoice.total - viewingInvoice.amount)),
+            },
+            { label: 'Importe total', value: formatCurrency(viewingInvoice.total) },
+          ]}
+        />
+      )}
 
       <Modal
         isOpen={isOtherIncomeModalOpen}
@@ -1190,54 +1486,28 @@ export default function IngresosPage() {
         </form>
       </Modal>
 
-      <Modal
-        isOpen={isPaymentModalOpen}
-        onClose={() => setIsPaymentModalOpen(false)}
-        title="Registrar Pago Manual"
-      >
-        <form className="mt-4 space-y-4" onSubmit={handleManualPayment}>
-          <label className="text-sm font-medium text-slate-600">
-            Factura
-            <select
-              value={paymentForm.invoiceId}
-              onChange={(event) =>
-                setPaymentForm((prev) => ({
-                  ...prev,
-                  invoiceId: event.target.value,
-                }))
-              }
-              className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 outline-none focus:border-blue-500"
-            >
-              <option value="">Selecciona una factura pendiente</option>
-              {invoices.filter(inv => inv.status !== 'Pagado').map((invoice) => (
-                <option key={invoice.recordId} value={invoice.recordId}>
-                  {invoice.id} · {shortenName(invoice.client)} ({formatCurrency(invoice.balance)})
-                </option>
-              ))}
-            </select>
-          </label>
-          <InputField
-            label="Monto a registrar"
-            type="number"
-            step="0.01"
-            value={paymentForm.amount}
-            onChange={(value) =>
-              setPaymentForm((prev) => ({ ...prev, amount: value }))
-            }
-            placeholder="0.00"
-          />
-          {paymentError && (
-            <p className="text-sm font-medium text-rose-600">{paymentError}</p>
+      {collectingInvoiceId !== null && (
+        <CollectionModal
+          invoices={invoices.filter(
+            (invoice) => invoice.balance > 0 || invoice.recordId === collectingInvoiceId,
           )}
-          <button
-            type="submit"
-            className="w-full rounded-lg border border-slate-300 bg-white py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-60"
-            disabled={isSavingPayment}
-          >
-            {isSavingPayment ? 'Aplicando...' : 'Aplicar pago'}
-          </button>
-        </form>
-      </Modal>
+          initialInvoiceId={collectingInvoiceId || null}
+          isRetentionAgent={isRetentionAgent}
+          collectionColumns={collectionColumns}
+          onSubmit={registerCollection}
+          onClose={() => setCollectingInvoiceId(null)}
+        />
+      )}
+
+      {isStatementOpen && (
+        <StatementModal
+          invoices={invoices}
+          partners={partners}
+          initialClientKey={statementClientKey}
+          fetchDocument={fetchDocument}
+          onClose={() => setIsStatementOpen(false)}
+        />
+      )}
     </div>
   );
 }

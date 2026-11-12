@@ -18,6 +18,7 @@ export type PaymentMethod =
   | 'otros';
 
 export type ExpenseDocumentType = 'factura' | 'recibo' | 'boleta';
+export type DetractionStatus = 'pendiente' | 'depositada' | 'no_aplicada';
 export type ExpenseCategory =
   | 'servicios'
   | 'materiales'
@@ -40,6 +41,10 @@ export interface InvoiceFormState {
   vat: string;
   paid: string;
   detractionDeposited?: boolean;
+  igvRetention?: string;
+  retentionReceipt?: string;
+  detractionStatus?: DetractionStatus | null;
+  detractionReceipt?: string;
 }
 
 export interface InvoiceRecord {
@@ -63,7 +68,14 @@ export interface InvoiceRecord {
   retentionIR?: number | null;
   itf?: number | null;
   category?: string | null;
+  /** Derivado de detractionStatus; se mantiene para la API de reportes */
   detractionDeposited?: boolean;
+  igvRetention?: number;
+  retentionReceipt?: string | null;
+  /** null = sin verificar (dato anterior a migration-cobranza.sql) */
+  detractionStatus?: DetractionStatus | null;
+  detractionReceipt?: string | null;
+  paymentAccount?: string | null;
 }
 
 export interface SupabaseInvoiceRow {
@@ -86,6 +98,11 @@ export interface SupabaseInvoiceRow {
   status?: AccountingStatus | null;
   retention_ir?: number | null;
   itf?: number | null;
+  igv_retention?: number | null;
+  retention_receipt?: string | null;
+  detraction_status?: DetractionStatus | null;
+  detraction_receipt?: string | null;
+  payment_account?: string | null;
   metadata?: Record<string, unknown> | null;
   created_at?: string | null;
   updated_at?: string | null;
@@ -158,6 +175,9 @@ export interface PartnerRecord {
   phone?: string | null;
   address?: string | null;
   notes?: string | null;
+  isRetentionAgent: boolean;
+  /** Cómo aparece el cliente en el extracto bancario */
+  bankAliases: string[];
 }
 
 export interface SupabasePartnerRow {
@@ -171,6 +191,8 @@ export interface SupabasePartnerRow {
   phone: string | null;
   address: string | null;
   notes: string | null;
+  is_retention_agent?: boolean | null;
+  bank_aliases?: string[] | null;
   metadata?: Record<string, unknown> | null;
   created_at?: string | null;
   updated_at?: string | null;

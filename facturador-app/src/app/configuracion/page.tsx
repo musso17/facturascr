@@ -1,6 +1,8 @@
 'use client';
 
-import { FormEvent, useState } from 'react';
+import { FormEvent, KeyboardEvent, useState } from 'react';
+import { X } from 'lucide-react';
+import type { PartnerRecord } from '@/lib/accounting-types';
 import { supabase } from '@/lib/supabase-client';
 import { usePartners } from '@/hooks/use-partners';
 
@@ -15,7 +17,16 @@ const INITIAL_FORM = {
 };
 
 export default function ConfiguracionPage() {
-  const { partners, isLoading, refresh } = usePartners();
+  const { partners, isLoading, refresh, collectionColumns, updatePartnerCollection } = usePartners();
+  const [collectionError, setCollectionError] = useState<string | null>(null);
+
+  const updateCollection = async (
+    id: string,
+    patch: { isRetentionAgent?: boolean; bankAliases?: string[] },
+  ) => {
+    const result = await updatePartnerCollection(id, patch);
+    setCollectionError(result.error ?? null);
+  };
   const [form, setForm] = useState(INITIAL_FORM);
   const [isSaving, setIsSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
@@ -172,7 +183,17 @@ export default function ConfiguracionPage() {
               {isLoading ? 'Cargando...' : `${partners.length} registrados`}
             </p>
           </div>
-          <div className="mt-4 max-h-[480px] overflow-y-auto">
+          {!collectionColumns && (
+            <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              Para marcar agentes de retención y alias bancarios, ejecuta{' '}
+              <code className="rounded bg-amber-100 px-1 font-mono">supabase/migration-cobranza.sql</code>{' '}
+              en el SQL Editor de Supabase y recarga.
+            </p>
+          )}
+          {collectionError && (
+            <p className="mt-3 text-sm font-semibold text-rose-600">{collectionError}</p>
+          )}
+          <div className="mt-4 max-h-[560px] overflow-y-auto">
             <table className="min-w-full divide-y divide-slate-100 text-sm">
               <thead>
                 <tr className="text-left text-xs uppercase tracking-[0.2em] text-slate-400">
@@ -180,12 +201,15 @@ export default function ConfiguracionPage() {
                   <th className="px-3 py-2">Documento</th>
                   <th className="px-3 py-2">Rol</th>
                   <th className="px-3 py-2">Contacto</th>
+                  <th className="px-3 py-2" title="Retención IGV y cómo aparece en el extracto bancario">
+                    Cobranza
+                  </th>
                 </tr>
               </thead>
               <tbody>
                 {partners.length === 0 ? (
                   <tr>
-                    <td colSpan={4} className="px-3 py-6 text-center text-slate-500">
+                    <td colSpan={5} className="px-3 py-6 text-center text-slate-500">
                       Aún no has registrado clientes ni proveedores.
                     </td>
                   </tr>
@@ -206,6 +230,15 @@ export default function ConfiguracionPage() {
                         <br />
                         {partner.phone}
                       </td>
+                      <td className="px-3 py-3 align-top">
+                        {partner.role !== 'proveedor' && (
+                          <PartnerCollectionCell
+                            partner={partner}
+                            disabled={!collectionColumns}
+                            onChange={(patch) => updateCollection(partner.id, patch)}
+                          />
+                        )}
+                      </td>
                     </tr>
                   ))
                 )}
@@ -216,6 +249,77 @@ export default function ConfiguracionPage() {
       </div>
         </section>
       </div>
+    </div>
+  );
+}
+
+function PartnerCollectionCell({
+  partner,
+  disabled,
+  onChange,
+}: {
+  partner: PartnerRecord;
+  disabled: boolean;
+  onChange: (patch: { isRetentionAgent?: boolean; bankAliases?: string[] }) => Promise<void>;
+}) {
+  const [draft, setDraft] = useState('');
+
+  const addAlias = () => {
+    const value = draft.trim();
+    if (!value) return;
+    setDraft('');
+    void onChange({ bankAliases: [...partner.bankAliases, value] });
+  };
+
+  const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      addAlias();
+    }
+  };
+
+  return (
+    <div className="min-w-[220px] space-y-2">
+      <label className="flex items-center gap-2 text-xs font-medium text-slate-700">
+        <input
+          type="checkbox"
+          checked={partner.isRetentionAgent}
+          disabled={disabled}
+          onChange={(event) => void onChange({ isRetentionAgent: event.target.checked })}
+          className="h-3.5 w-3.5 rounded border-slate-300"
+        />
+        Agente de retención (3% IGV)
+      </label>
+      <div className="flex flex-wrap gap-1">
+        {partner.bankAliases.map((alias) => (
+          <span
+            key={alias}
+            className="inline-flex items-center gap-1 rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-medium text-indigo-700"
+          >
+            {alias}
+            <button
+              type="button"
+              disabled={disabled}
+              onClick={() =>
+                void onChange({ bankAliases: partner.bankAliases.filter((item) => item !== alias) })
+              }
+              className="rounded-full hover:text-rose-600"
+              aria-label={`Quitar alias ${alias}`}
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </span>
+        ))}
+      </div>
+      <input
+        value={draft}
+        disabled={disabled}
+        onChange={(event) => setDraft(event.target.value)}
+        onKeyDown={onKeyDown}
+        onBlur={addAlias}
+        placeholder="Alias en el banco + Enter"
+        className="w-full rounded-lg border border-slate-200 px-2 py-1 text-xs outline-none focus:border-blue-400 disabled:bg-slate-50"
+      />
     </div>
   );
 }

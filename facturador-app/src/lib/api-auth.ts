@@ -24,13 +24,28 @@ export function unauthorizedResponse() {
   );
 }
 
+/**
+ * Cliente Supabase del servidor para la API/MCP de solo lectura.
+ *
+ * Usa la service role key: las tablas tienen RLS "solo usuarios autenticados",
+ * así que con la anon key (sin sesión) Supabase devuelve 0 filas sin error.
+ * Por eso el conector "Facturador" respondía cero facturas.
+ * La key vive solo en el servidor (SUPABASE_SERVICE_ROLE_KEY, sin NEXT_PUBLIC_)
+ * y estas rutas están protegidas con REPORT_API_TOKEN y nunca escriben.
+ */
 export function serverSupabase() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  if (!url || !key) {
-    throw new Error('Supabase env vars faltantes en el servidor.');
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url) {
+    throw new Error('Falta NEXT_PUBLIC_SUPABASE_URL en el servidor.');
   }
-  return createClient(url, key, { auth: { persistSession: false } });
+  if (!key) {
+    throw new Error(
+      'Falta SUPABASE_SERVICE_ROLE_KEY en el servidor. Sin ella, RLS devuelve 0 filas ' +
+        '(Supabase → Project Settings → API → service_role; agrégala en las variables de entorno de Netlify).',
+    );
+  }
+  return createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
 }
 
 /** Valida el query param periodo=YYYY-MM; devuelve null si no viene o es inválido. */

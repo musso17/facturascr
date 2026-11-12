@@ -5,6 +5,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import type { ReactNode } from 'react';
 import { useEffect } from 'react';
 import {
+  ArrowRightLeft,
   BarChart2,
   BrainCircuit,
   DollarSign,
@@ -24,6 +25,7 @@ const NAV_ITEMS = [
   { label: 'Dashboard', hint: 'Resumen general', href: '/', icon: Home, color: 'text-blue-400' },
   { label: 'Ingresos', hint: 'Facturas e ingresos', href: '/ingresos', icon: DollarSign, color: 'text-green-400' },
   { label: 'Egresos', hint: 'Gastos y proveedores', href: '/egresos', icon: Wallet, color: 'text-orange-400' },
+  { label: 'Conciliación', hint: 'Extracto vs. facturas', href: '/conciliacion', icon: ArrowRightLeft, color: 'text-cyan-400' },
   { label: 'Proyectos', hint: 'Control de ejecución', href: '/proyectos', icon: FolderKanban, color: 'text-indigo-400' },
   { label: 'Reportes', hint: 'Estados y métricas', href: '/reportes', icon: BarChart2, color: 'text-purple-400' },
   { label: 'Impuestos', hint: 'Obligaciones SUNAT', href: '/impuestos', icon: Landmark, color: 'text-red-400' },

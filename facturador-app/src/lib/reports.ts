@@ -7,6 +7,7 @@
  */
 import { mapInvoiceRow, summarizeInvoices } from './accounting-service';
 import { calcDetraction } from './detraction';
+import { getCollectionBreakdown } from './collection';
 import { serverSupabase } from './api-auth';
 import { SupabaseExpenseRow, SupabaseInvoiceRow } from './accounting-types';
 
@@ -103,6 +104,7 @@ export async function getIngresos(periodo: string | null) {
 
   const items = ((data ?? []) as SupabaseInvoiceRow[]).map(mapInvoiceRow).map((inv) => {
     const detraction = calcDetraction(inv.total);
+    const breakdown = getCollectionBreakdown(inv);
     return {
       factura: inv.id,
       cliente: inv.client,
@@ -116,8 +118,19 @@ export async function getIngresos(periodo: string | null) {
       saldo: inv.balance,
       estado: inv.status,
       detraccion: detraction.applies
-        ? { monto: detraction.detractionAmount, depositada: inv.detractionDeposited ?? false }
+        ? {
+            monto: detraction.detractionAmount,
+            estado: inv.detractionStatus ?? 'sin_verificar',
+            depositada: inv.detractionStatus === 'depositada',
+            constancia: inv.detractionReceipt ?? null,
+          }
         : null,
+      retencionIGV: inv.igvRetention
+        ? { monto: inv.igvRetention, comprobante: inv.retentionReceipt ?? null }
+        : null,
+      netoCuentaCorriente: breakdown.netToAccount,
+      cuentaDestino: inv.paymentAccount ?? null,
+      fechaCobro: inv.paymentDate ?? null,
     };
   });
 

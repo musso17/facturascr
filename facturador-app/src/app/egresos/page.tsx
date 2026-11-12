@@ -9,6 +9,12 @@ import {
 } from '@/lib/accounting-types';
 import { useExpenses } from '@/hooks/use-expenses';
 import { usePartners } from '@/hooks/use-partners';
+import { useSourceDocuments } from '@/hooks/use-source-documents';
+import { parseSunatDocument, readXmlFile } from '@/lib/sunat-document';
+import {
+  DocumentViewerModal,
+  sameDocumentNumber,
+} from '@/components/documents/DocumentViewerModal';
 import { ChangeEvent, FormEvent, useMemo, useState, ReactNode, useRef } from 'react';
 import {
   ArrowRightLeft,
@@ -205,6 +211,16 @@ export default function EgresosPage() {
     deleteExpense,
   } = useExpenses();
   const { partners } = usePartners();
+  const {
+    documents: expenseDocuments,
+    tableMissing: documentsTableMissing,
+    fetchDocument,
+    saveDocument,
+  } = useSourceDocuments('expense');
+  const [viewingExpenseId, setViewingExpenseId] = useState<string | null>(null);
+  const viewingExpense = viewingExpenseId
+    ? expenses.find((expense) => expense.id === viewingExpenseId) ?? null
+    : null;
   const [form, setForm] = useState(INITIAL_FORM);
   const [formError, setFormError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -355,34 +371,84 @@ export default function EgresosPage() {
     }
   };
 
+  // Acepta varios XML: si el egreso no existe lo registra; si ya existe, le adjunta el XML
   const handleXMLUpload = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
+    const files = Array.from(event.target.files ?? []);
     event.target.value = '';
-    if (!file) return;
+    if (files.length === 0) return;
 
     setXmlUploadError(null);
     setXmlUploadMessage(null);
     setIsUploadingXML(true);
 
-    try {
-      const xmlContent = await file.text();
-      const result = await insertExpenseFromXML(xmlContent);
-      if (result.error) {
-        setXmlUploadError(result.error);
-      } else if (result.data) {
-        setXmlUploadMessage(`Egreso ${result.data.documentNumber} registrado correctamente.`);
-        setTimeout(() => {
-          setIsModalOpen(false);
-          setXmlUploadMessage(null);
-        }, 1500);
+    const created: string[] = [];
+    const attached: string[] = [];
+    const skipped: string[] = [];
+    const errors: string[] = [];
+    const prefix = (file: File) => (files.length > 1 ? `${file.name}: ` : '');
+
+    for (const file of files) {
+      try {
+        const xmlContent = await readXmlFile(file);
+        const doc = parseSunatDocument(xmlContent);
+        const supplierDoc = doc.supplier.documentNumber;
+        const existing = expenses.find(
+          (expense) =>
+            sameDocumentNumber(getExpenseNumber(expense), doc.id) &&
+            (!expense.providerDocument || !supplierDoc || expense.providerDocument === supplierDoc),
+        );
+
+        if (existing) {
+          if (expenseDocuments.has(existing.id)) {
+            skipped.push(doc.id);
+            continue;
+          }
+          const saved = await saveDocument(existing.id, xmlContent, file.name);
+          if (saved.error) errors.push(`${prefix(file)}${saved.error}`);
+          else attached.push(doc.id);
+          continue;
+        }
+
+        const result = await insertExpenseFromXML(xmlContent);
+        if (result.error || !result.data) {
+          errors.push(`${prefix(file)}${result.error ?? 'No se pudo registrar.'}`);
+          continue;
+        }
+        created.push(doc.id);
+        const saved = await saveDocument(result.data.id, xmlContent, file.name);
+        if (saved.error) {
+          errors.push(`${doc.id} se registró, pero el XML no se guardó: ${saved.error}`);
+        }
+      } catch (error) {
+        console.error(error);
+        errors.push(
+          `${prefix(file)}${error instanceof Error ? error.message : 'No se pudo interpretar el XML.'}`,
+        );
       }
-    } catch (error) {
-      console.error(error);
-      setXmlUploadError(
-        error instanceof Error ? error.message : 'No se pudo interpretar el XML.',
-      );
-    } finally {
-      setIsUploadingXML(false);
+    }
+
+    const summary = [
+      created.length > 0 &&
+        (created.length === 1
+          ? `Egreso ${created[0]} registrado correctamente.`
+          : `${created.length} egresos registrados.`),
+      attached.length > 0 &&
+        (attached.length === 1
+          ? `XML adjuntado al egreso ${attached[0]}.`
+          : `XML adjuntado a ${attached.length} egresos existentes.`),
+      skipped.length > 0 &&
+        `${skipped.length === 1 ? `${skipped[0]} ya tenía` : `${skipped.length} egresos ya tenían`} su XML.`,
+    ]
+      .filter(Boolean)
+      .join(' ');
+    setXmlUploadMessage(summary || null);
+    setXmlUploadError(errors.length > 0 ? errors.join('\n') : null);
+    setIsUploadingXML(false);
+    if (errors.length === 0 && (created.length > 0 || attached.length > 0)) {
+      setTimeout(() => {
+        setIsModalOpen(false);
+        setXmlUploadMessage(null);
+      }, 1500);
     }
   };
 
@@ -451,6 +517,8 @@ export default function EgresosPage() {
     setForm(INITIAL_FORM);
     setEditingExpenseId(null);
     setFormError(null);
+    setXmlUploadError(null);
+    setXmlUploadMessage(null);
     setIsModalOpen(true);
   };
 
@@ -841,13 +909,29 @@ export default function EgresosPage() {
                       return (
                         <tr key={expense.id} className="border-b border-slate-200 hover:bg-slate-50 transition-colors group">
                           <td className="px-4 py-4 whitespace-nowrap">
-                            <div className="flex items-center gap-2">
-                              <FileText className="w-3.5 h-3.5 text-slate-400" />
+                            <button
+                              type="button"
+                              onClick={() => setViewingExpenseId(expense.id)}
+                              className="flex items-center gap-2 rounded text-left"
+                              title="Ver comprobante"
+                            >
+                              <FileText
+                                className={`w-3.5 h-3.5 ${expenseDocuments.has(expense.id) ? 'text-emerald-600' : 'text-slate-400'}`}
+                              />
                               <div>
-                                <p className="text-slate-900 font-semibold">{expense.documentNumber}</p>
-                                <p className="text-slate-500 text-xs">{expense.documentType}</p>
+                                <p className="text-slate-900 font-semibold underline-offset-2 hover:text-blue-700 hover:underline">
+                                  {expense.documentNumber}
+                                </p>
+                                <p className="text-slate-500 text-xs">
+                                  {expense.documentType}
+                                  {expenseDocuments.has(expense.id) && (
+                                    <span className="ml-1.5 rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700">
+                                      XML
+                                    </span>
+                                  )}
+                                </p>
                               </div>
-                            </div>
+                            </button>
                           </td>
                           <td className="px-4 py-4">
                             <div className="flex items-center gap-3">
@@ -888,6 +972,13 @@ export default function EgresosPage() {
                           </td>
                           <td className="px-4 py-4 text-right whitespace-nowrap">
                             <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                              <button
+                                onClick={() => setViewingExpenseId(expense.id)}
+                                className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                                title="Ver comprobante"
+                              >
+                                <Eye className="w-4 h-4" />
+                              </button>
                               <button
                                 onClick={() => handleEditExpense(expense)}
                                 disabled={busyExpenseId === expense.id}
@@ -939,6 +1030,9 @@ export default function EgresosPage() {
               <p className="text-sm font-semibold uppercase tracking-wide text-slate-300">
                 Importar XML (SUNAT)
               </p>
+              <p className="mt-0.5 text-xs text-slate-400">
+                Puedes elegir varios. Si el egreso ya existe, se le adjunta el XML.
+              </p>
             </div>
             <button
               type="button"
@@ -953,12 +1047,18 @@ export default function EgresosPage() {
             <p className="mt-3 text-sm font-semibold text-emerald-300">{xmlUploadMessage}</p>
           )}
           {xmlUploadError && (
-            <p className="mt-3 text-sm font-semibold text-rose-300">{xmlUploadError}</p>
+            <p className="mt-3 whitespace-pre-line text-sm font-semibold text-rose-300">{xmlUploadError}</p>
+          )}
+          {documentsTableMissing && (
+            <p className="mt-3 text-xs text-amber-300">
+              El XML original no se guardará hasta ejecutar supabase/migration-documentos.sql en Supabase.
+            </p>
           )}
           <input
             ref={xmlInputRef}
             type="file"
-            accept=".xml"
+            accept=".xml,text/xml,application/xml"
+            multiple
             className="sr-only"
             onChange={handleXMLUpload}
           />
@@ -1218,8 +1318,61 @@ export default function EgresosPage() {
           </button>
         </form>
       </Modal>
+
+      {viewingExpense && (
+        <DocumentViewerModal
+          key={viewingExpense.id}
+          recordId={viewingExpense.id}
+          expectedNumber={getExpenseNumber(viewingExpense)}
+          tableMissing={documentsTableMissing}
+          fetchDocument={fetchDocument}
+          saveDocument={saveDocument}
+          onClose={() => setViewingExpenseId(null)}
+          statusSlot={
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-2 rounded-lg border border-slate-200 px-4 py-2.5 text-sm">
+              {STATUS_META[viewingExpense.status].badge}
+              <span className="text-slate-600">
+                Pagado{' '}
+                <strong className="text-slate-800">{formatCurrency(viewingExpense.paidAmount)}</strong>
+              </span>
+              <span className="text-slate-600">
+                Categoría <strong className="text-slate-800">{viewingExpense.category}</strong>
+              </span>
+              {viewingExpense.clientName && (
+                <span className="text-slate-600">
+                  Cliente <strong className="text-slate-800">{viewingExpense.clientName}</strong>
+                </span>
+              )}
+            </div>
+          }
+          fallbackFields={[
+            { label: 'Proveedor', value: viewingExpense.providerName },
+            { label: 'RUC / documento', value: viewingExpense.providerDocument ?? '' },
+            { label: 'Tipo de comprobante', value: viewingExpense.documentType },
+            { label: 'Fecha de emisión', value: formatDate(viewingExpense.issueDate) },
+            { label: 'Concepto', value: viewingExpense.concept },
+            { label: 'Fecha de vencimiento', value: formatDate(viewingExpense.dueDate) },
+            { label: 'Base imponible', value: formatCurrency(viewingExpense.baseAmount) },
+            { label: 'IGV', value: formatCurrency(viewingExpense.igvAmount) },
+            ...(viewingExpense.irRetention
+              ? [{ label: 'Retención IR', value: formatCurrency(viewingExpense.irRetention) }]
+              : []),
+            ...(viewingExpense.otherTaxes
+              ? [{ label: 'Otros tributos', value: formatCurrency(viewingExpense.otherTaxes) }]
+              : []),
+            { label: 'Total', value: formatCurrency(viewingExpense.totalAmount) },
+            ...(viewingExpense.notes ? [{ label: 'Notas', value: viewingExpense.notes }] : []),
+          ]}
+        />
+      )}
     </div>
   );
+}
+
+function getExpenseNumber(expense: ExpenseRecord) {
+  return expense.documentSeries
+    ? `${expense.documentSeries}-${expense.documentNumber}`
+    : expense.documentNumber;
 }
 
 function Modal({

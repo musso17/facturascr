@@ -36,6 +36,9 @@ export function mapInvoiceRow(row: SupabaseInvoiceRow): InvoiceRecord {
   const total = row.total ?? round(amount * (1 + vat / 100));
   const paid = row.paid ?? 0;
   const meta = (row.metadata ?? {}) as { detraction_deposited?: boolean };
+  // Antes de migration-cobranza.sql el único dato era la casilla de metadata
+  const detractionStatus =
+    row.detraction_status ?? (meta.detraction_deposited ? 'depositada' : null);
   const persistedStatus =
     row.status && ACCOUNTING_STATUS_TO_LABEL[row.status]
       ? ACCOUNTING_STATUS_TO_LABEL[row.status]
@@ -63,7 +66,12 @@ export function mapInvoiceRow(row: SupabaseInvoiceRow): InvoiceRecord {
       retentionIR: row.retention_ir ?? 0,
       itf: row.itf ?? 0,
       category: row.category ?? null,
-      detractionDeposited: meta.detraction_deposited ?? false,
+      detractionDeposited: detractionStatus === 'depositada',
+      igvRetention: Number(row.igv_retention) || 0,
+      retentionReceipt: row.retention_receipt ?? null,
+      detractionStatus,
+      detractionReceipt: row.detraction_receipt ?? null,
+      paymentAccount: row.payment_account ?? null,
     },
     persistedStatus,
   );
@@ -305,13 +313,18 @@ export function calculateFinancialMetrics(baseline: ProjectionBaseline): Financi
   };
 }
 
-export function buildInvoicePayload(input: InvoiceFormState) {
+/**
+ * @param collectionColumns true si la base ya tiene las columnas de
+ *   supabase/migration-cobranza.sql (retención, estado de detracción…).
+ *   Si no, se usa la casilla antigua en metadata.
+ */
+export function buildInvoicePayload(input: InvoiceFormState, collectionColumns = false) {
   const amount = Number(input.amount) || 0;
   const vat = Number(input.vat) || 0;
   const total = round(amount * (1 + vat / 100));
   const paid = Math.min(Number(input.paid) || 0, total);
 
-  return {
+  const base = {
     invoice_number: input.id.trim(),
     client: input.client.trim(),
     client_id: input.clientId ?? null,
@@ -323,8 +336,22 @@ export function buildInvoicePayload(input: InvoiceFormState) {
     vat,
     total,
     paid,
+  };
+
+  if (collectionColumns) {
+    return {
+      ...base,
+      igv_retention: round(Number(input.igvRetention) || 0),
+      retention_receipt: input.retentionReceipt?.trim() || null,
+      detraction_status: input.detractionStatus ?? null,
+      detraction_receipt: input.detractionReceipt?.trim() || null,
+    };
+  }
+  return {
+    ...base,
     metadata: {
-      detraction_deposited: input.detractionDeposited ?? false,
+      detraction_deposited:
+        input.detractionStatus === 'depositada' || (input.detractionDeposited ?? false),
     },
   };
 }
@@ -367,6 +394,7 @@ export function parseSunatInvoiceXML(xmlContent: string): InvoiceFormState {
     ) ?? '';
 
   const description =
+    joinLineDescriptions(doc, resolver) ??
     pick(
       '(/ns:Invoice/cac:InvoiceLine/cac:Item/cbc:Description)[1]',
       '(/ns:Invoice/cac:InvoiceLine/cbc:Note)[1]',
@@ -466,6 +494,7 @@ export function parseSunatExpenseXML(xmlContent: string): ExpenseFormState {
     ) ?? '';
 
   const description =
+    joinLineDescriptions(doc, resolver) ??
     pick(
       '(/ns:Invoice/cac:InvoiceLine/cac:Item/cbc:Description)[1]',
       '(/ns:Invoice/cac:InvoiceLine/cbc:Note)[1]',
@@ -505,6 +534,24 @@ export function parseSunatExpenseXML(xmlContent: string): ExpenseFormState {
     category: 'servicios',
     notes: 'Importado desde XML',
   };
+}
+
+// Todas las líneas del comprobante, no solo la primera (p. ej. "Video · Fotografía")
+function joinLineDescriptions(doc: Document, resolver: XPathNSResolver) {
+  if (typeof doc.evaluate !== 'function') return null;
+  const result = doc.evaluate(
+    '/ns:Invoice/cac:InvoiceLine/cac:Item/cbc:Description',
+    doc,
+    resolver,
+    XPathResult.ORDERED_NODE_SNAPSHOT_TYPE,
+    null,
+  );
+  const parts: string[] = [];
+  for (let i = 0; i < result.snapshotLength; i += 1) {
+    const value = result.snapshotItem(i)?.textContent?.replace(/\s+/g, ' ').trim();
+    if (value && !parts.includes(value)) parts.push(value);
+  }
+  return parts.length > 0 ? parts.join(' · ') : null;
 }
 
 function pickXPathText(doc: Document, resolver: XPathNSResolver, expressions: string[]) {
