@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { ChangeEvent, ReactNode, useMemo, useRef, useState } from 'react';
+import { ChangeEvent, ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
   ArrowDownLeft,
@@ -35,6 +35,13 @@ import { useInvoices } from '@/hooks/use-invoices';
 import { useExpenses } from '@/hooks/use-expenses';
 import { usePartners } from '@/hooks/use-partners';
 import { useManagementIncomes } from '@/hooks/use-management-incomes';
+import {
+  DEFAULT_ACCOUNT,
+  accountOfTransaction,
+  bankOf,
+  sameAccount,
+  suggestAccountName,
+} from '@/lib/bank-accounts';
 
 const money = new Intl.NumberFormat('es-PE', { style: 'currency', currency: 'PEN', minimumFractionDigits: 2 });
 const fmt = (value: number) => money.format(value || 0);
@@ -47,9 +54,28 @@ const monthLabel = (key: string) => {
   return label.charAt(0).toUpperCase() + label.slice(1);
 };
 
-const STATEMENT_ACCOUNTS = ['BBVA cuenta corriente', 'Otra cuenta'] as const;
-// Cuentas que no pasan por el extracto importado
+// Destinos de cobro que no tienen extracto importable
 const OFF_STATEMENT_ACCOUNTS = ['Banco de la Nación (detracciones)', 'Otra cuenta', 'Efectivo / caja'];
+const CUSTOM_ACCOUNTS_KEY = 'facturador.cuentasBancarias';
+const NEW_ACCOUNT = '__nueva__';
+
+function loadCustomAccounts(): string[] {
+  try {
+    const raw = localStorage.getItem(CUSTOM_ACCOUNTS_KEY);
+    const list = raw ? (JSON.parse(raw) as unknown) : [];
+    return Array.isArray(list) ? list.filter((item): item is string => typeof item === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveCustomAccounts(list: string[]) {
+  try {
+    localStorage.setItem(CUSTOM_ACCOUNTS_KEY, JSON.stringify(list));
+  } catch {
+    // sin almacenamiento local: la cuenta igual queda registrada al importar su extracto
+  }
+}
 const CHARGE_LABEL: Record<BankChargeKind, string> = {
   comision: 'Comisión bancaria',
   mantenimiento: 'Mantenimiento de cuenta',
@@ -61,6 +87,7 @@ const DEBIT_NOT_EXPENSE = ['Transferencia entre cuentas', 'Retiro / pago a socio
 const BULK_MIN_SCORE = 0.85;
 
 type ImportInfo = {
+  account: string;
   fileName: string;
   bankName: string | null;
   inserted: number;
@@ -100,7 +127,13 @@ export default function ConciliacionPage() {
   const { partners, updatePartnerCollection, createClientPartner, collectionColumns: partnerColumns } = usePartners();
   const { insertIncome, tableMissing: incomesTableMissing } = useManagementIncomes();
 
-  const [account, setAccount] = useState<string>(STATEMENT_ACCOUNTS[0]);
+  const [account, setAccount] = useState<string>(DEFAULT_ACCOUNT);
+  // Cuentas registradas a mano (antes de importar su primer extracto)
+  const [customAccounts, setCustomAccounts] = useState<string[]>([]);
+  useEffect(() => {
+    const handle = setTimeout(() => setCustomAccounts(loadCustomAccounts()), 0);
+    return () => clearTimeout(handle);
+  }, []);
   const [month, setMonth] = useState<string | null>(null);
   const [isImporting, setIsImporting] = useState(false);
   const [importInfo, setImportInfo] = useState<ImportInfo | null>(null);
@@ -119,13 +152,45 @@ export default function ConciliacionPage() {
   const invoiceById = useMemo(() => new Map(invoices.map((inv) => [inv.recordId, inv])), [invoices]);
   const expenseById = useMemo(() => new Map(expenses.map((exp) => [exp.id, exp])), [expenses]);
 
-  // Los movimientos importados antes de elegir cuenta quedaron como "Principal" (BBVA)
-  const accountOf = (tx: BankTransaction) =>
-    !tx.accountName || tx.accountName === 'Principal' ? STATEMENT_ACCOUNTS[0] : tx.accountName;
-  const accountTxs = useMemo(
-    () => transactions.filter((tx) => accountOf(tx) === account),
-    [transactions, account],
-  );
+  // Una cuenta existe por sus movimientos importados, o porque se registró a mano
+  const accounts = useMemo(() => {
+    const list = [DEFAULT_ACCOUNT];
+    for (const name of [...transactions.map((tx) => accountOfTransaction(tx.accountName)), ...customAccounts]) {
+      if (!list.includes(name)) list.push(name);
+    }
+    return list;
+  }, [transactions, customAccounts]);
+
+  const registerAccount = (name: string) => {
+    const clean = name.trim();
+    if (!clean) return null;
+    const existing = accounts.find((item) => sameAccount(item, clean) && item.toLowerCase() === clean.toLowerCase());
+    if (existing) return existing;
+    const next = [...customAccounts.filter((item) => item !== clean), clean];
+    setCustomAccounts(next);
+    saveCustomAccounts(next);
+    return clean;
+  };
+
+  const handleAccountChange = (value: string) => {
+    if (value !== NEW_ACCOUNT) {
+      setAccount(value);
+      return;
+    }
+    const name = window.prompt('Nombre de la cuenta (banco, tipo y últimos 4 dígitos):', 'Interbank cuenta corriente ···0000');
+    const registered = name ? registerAccount(name) : null;
+    if (registered) setAccount(registered);
+  };
+
+  const transactionsByAccount = useMemo(() => {
+    const map = new Map<string, BankTransaction[]>();
+    for (const tx of transactions) {
+      const name = accountOfTransaction(tx.accountName);
+      map.set(name, [...(map.get(name) ?? []), tx]);
+    }
+    return map;
+  }, [transactions]);
+  const accountTxs = useMemo(() => transactionsByAccount.get(account) ?? [], [transactionsByAccount, account]);
 
   const months = useMemo(
     () => Array.from(new Set(accountTxs.map((tx) => tx.transactionDate.slice(0, 7)))).sort().reverse(),
@@ -149,6 +214,28 @@ export default function ConciliacionPage() {
     [accountTxs, invoices, expenses, partners, reconciledInvoiceIds, reconciledExpenseIds, links, account],
   );
 
+  // Lo que explica un movimiento de OTRA cuenta no está "sin movimiento" en esta
+  const claimedElsewhere = useMemo(() => {
+    const invoiceIds = new Set<string>();
+    const expenseIds = new Set<string>();
+    for (const [name, txs] of transactionsByAccount) {
+      if (name === account) continue;
+      const other = reviewStatement({
+        transactions: txs,
+        invoices,
+        expenses,
+        partners,
+        reconciledInvoiceIds,
+        reconciledExpenseIds,
+        linkedTxIds: new Set(links.keys()),
+        statementAccount: name,
+      });
+      other.claimedInvoiceIds.forEach((id) => invoiceIds.add(id));
+      other.claimedExpenseIds.forEach((id) => expenseIds.add(id));
+    }
+    return { invoiceIds, expenseIds };
+  }, [transactionsByAccount, account, invoices, expenses, partners, reconciledInvoiceIds, reconciledExpenseIds, links]);
+
   const inMonth = (date: string | null | undefined) => !activeMonth || (date ?? '').startsWith(activeMonth);
   const credits = review.credits.filter((c) => inMonth(c.tx.transactionDate));
   const debits = review.debits.filter((d) => inMonth(d.tx.transactionDate));
@@ -171,8 +258,32 @@ export default function ConciliacionPage() {
   const monthItf = round2(
     accountTxs.filter((tx) => inMonth(tx.transactionDate)).reduce((sum, tx) => sum + (tx.itf || 0), 0),
   );
-  const unbackedInvoices = review.unbackedInvoices.filter((inv) => inMonth(inv.paymentDate ?? inv.dueDate));
-  const unbackedExpenses = review.unbackedExpenses.filter((exp) => inMonth(exp.paymentDate ?? exp.issueDate));
+  // Sin cuenta registrada, solo se puede afirmar "sin movimiento" si TODAS las cuentas tienen
+  // extracto importado para esa fecha (+15 días de margen); si no, pudo entrar por otra cuenta
+  const monthsByAccount = useMemo(() => {
+    const map = new Map<string, Set<string>>();
+    for (const [name, txs] of transactionsByAccount) map.set(name, new Set(txs.map((tx) => tx.transactionDate.slice(0, 7))));
+    return map;
+  }, [transactionsByAccount]);
+  const coveredByAllAccounts = (date: string) => {
+    const shifted = new Date(new Date(`${date.slice(0, 10)}T00:00:00`).getTime() + 15 * 86_400_000);
+    const key = `${shifted.getFullYear()}-${String(shifted.getMonth() + 1).padStart(2, '0')}`;
+    return Array.from(monthsByAccount.values()).every((months) => months.has(key));
+  };
+  const unbackedInvoices = review.unbackedInvoices.filter(
+    (inv) =>
+      inMonth(inv.paymentDate ?? inv.dueDate) &&
+      !claimedElsewhere.invoiceIds.has(inv.recordId) &&
+      (inv.paymentAccount ? true : coveredByAllAccounts(inv.paymentDate ?? inv.dueDate)),
+  );
+  const unbackedExpenses = review.unbackedExpenses.filter(
+    (exp) =>
+      inMonth(exp.paymentDate ?? exp.issueDate) &&
+      !claimedElsewhere.expenseIds.has(exp.id) &&
+      coveredByAllAccounts(exp.paymentDate ?? exp.issueDate),
+  );
+  // "Entró a otra cuenta…": las demás cuentas registradas y los destinos sin extracto
+  const otherDestinations = [...accounts.filter((item) => item !== account), ...OFF_STATEMENT_ACCOUNTS];
 
   const sum = (list: { tx: BankTransaction }[]) => round2(list.reduce((s, item) => s + Math.abs(item.tx.amount), 0));
   // En bloque solo lo seguro: alta coincidencia y sin sorpresas (pago sin detracción se revisa uno por uno)
@@ -196,10 +307,27 @@ export default function ConciliacionPage() {
     setImportInfo(null);
     setImportErrors([]);
     try {
-      const { result, insertedCount, duplicateCount } = await importFromFile(file, account);
+      // Si el archivo dice de qué banco/cuenta es y no coincide con la elegida, manda el archivo
+      const { result, insertedCount, duplicateCount, accountName } = await importFromFile(file, (parsed) => {
+        const detected = suggestAccountName(
+          parsed.bankName,
+          parsed.statement?.accountType,
+          parsed.statement?.accountNumber,
+        );
+        if (!detected || !parsed.bankName) return account;
+        const known = accounts.find((item) => sameAccount(item, detected));
+        if (known) return known;
+        if (bankOf(account) === bankOf(detected) && !/\d{4}/.test(account)) return account;
+        return detected;
+      });
       setImportErrors(result.errors);
+      if (accountName !== account) {
+        registerAccount(accountName);
+        setAccount(accountName);
+      }
       if (result.rows.length > 0) {
         setImportInfo({
+          account: accountName,
           fileName: file.name,
           bankName: result.bankName,
           inserted: insertedCount,
@@ -511,15 +639,16 @@ export default function ConciliacionPage() {
             <div className="flex flex-wrap items-center gap-2">
               <select
                 value={account}
-                onChange={(event) => setAccount(event.target.value)}
+                onChange={(event) => handleAccountChange(event.target.value)}
                 className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:border-blue-500"
                 title="Cuenta a la que pertenece el extracto"
               >
-                {STATEMENT_ACCOUNTS.map((item) => (
+                {accounts.map((item) => (
                   <option key={item} value={item}>
                     {item}
                   </option>
                 ))}
+                <option value={NEW_ACCOUNT}>+ Registrar otra cuenta…</option>
               </select>
               <button
                 type="button"
@@ -867,7 +996,7 @@ export default function ConciliacionPage() {
                     <div className="flex flex-wrap items-center gap-2">
                       <CategorySelect
                         placeholder="Entró a otra cuenta…"
-                        options={OFF_STATEMENT_ACCOUNTS}
+                        options={otherDestinations}
                         disabled={!collectionColumns || locked}
                         onPick={(label) => run(invoice.recordId, () => setPaymentAccount(invoice.recordId, label))}
                       />
@@ -1160,7 +1289,7 @@ function ImportSummary({ info, onClose }: { info: ImportInfo; onClose: () => voi
           <p className="flex items-center gap-2 font-semibold">
             <CheckCircle className="h-4 w-4" />
             {info.fileName}
-            {info.bankName && <span className="font-normal">· {info.bankName}</span>}
+            <span className="font-normal">· {info.account}</span>
           </p>
           <p>
             {info.credits} abonos y {info.debits} cargos · {info.inserted} nuevos

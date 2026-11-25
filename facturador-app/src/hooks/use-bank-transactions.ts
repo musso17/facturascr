@@ -7,6 +7,7 @@ import type {
   BankImportResult,
 } from '@/lib/bank-types';
 import { parseBankStatement } from '@/lib/bank-parser';
+import { DEFAULT_ACCOUNT, LEGACY_ACCOUNT, sameAccount } from '@/lib/bank-accounts';
 import { supabase } from '@/lib/supabase-client';
 
 // ─── Row mapper ──────────────────────────────────────────────────────
@@ -202,12 +203,17 @@ export function useBankTransactions() {
   const importFromFile = useCallback(
     async (
       file: File,
-      accountName = 'Principal',
-    ): Promise<{ result: BankImportResult; insertedCount: number; duplicateCount: number }> => {
+      /** Cuenta destino, o una función que la elige con lo que se detectó en el archivo */
+      account: string | ((result: BankImportResult) => string) = DEFAULT_ACCOUNT,
+    ): Promise<{ result: BankImportResult; insertedCount: number; duplicateCount: number; accountName: string }> => {
       const result = await parseBankStatement(file);
+      const accountName = typeof account === 'function' ? account(result) : account;
+      // Los movimientos antiguos "Principal" son de la cuenta BBVA
+      const sameStoredAccount = (stored: string) =>
+        stored === accountName || (stored === LEGACY_ACCOUNT && sameAccount(accountName, DEFAULT_ACCOUNT));
 
       if (result.rows.length === 0) {
-        return { result, insertedCount: 0, duplicateCount: 0 };
+        return { result, insertedCount: 0, duplicateCount: 0, accountName };
       }
 
       // Generate a batch ID for this import
@@ -231,7 +237,7 @@ export function useBankTransactions() {
         reference: string | null;
         account_name: string;
       }[]) {
-        if (row.account_name !== accountName && row.account_name !== 'Principal') continue;
+        if (!sameStoredAccount(row.account_name)) continue;
         const loose = looseKey(row.transaction_date, row.amount, row.description);
         bump(any, loose);
         if (isOperationNumber(row.reference)) bump(strict, `${loose}|${row.reference!.trim()}`);
@@ -256,7 +262,7 @@ export function useBankTransactions() {
       const duplicateCount = result.rows.length - newRows.length;
 
       if (newRows.length === 0) {
-        return { result, insertedCount: 0, duplicateCount };
+        return { result, insertedCount: 0, duplicateCount, accountName };
       }
 
       // Bulk insert
@@ -282,13 +288,13 @@ export function useBankTransactions() {
       if (error) {
         console.error(error);
         result.errors.push(`Error al guardar: ${error.message}`);
-        return { result, insertedCount: 0, duplicateCount };
+        return { result, insertedCount: 0, duplicateCount, accountName };
       }
 
       // Refresh list
       await loadTransactions();
 
-      return { result, insertedCount: newRows.length, duplicateCount };
+      return { result, insertedCount: newRows.length, duplicateCount, accountName };
     },
     [loadTransactions],
   );

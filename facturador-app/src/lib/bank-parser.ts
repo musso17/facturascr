@@ -6,7 +6,12 @@
  */
 
 import type { BankImportResult, ParsedBankRow } from './bank-types';
-import { looksLikeHtml, parseHtmlStatement } from './bank-statement-html';
+import {
+  looksLikeHtml,
+  parseHtmlStatement,
+  parseTabularStatement,
+  type HtmlStatement,
+} from './bank-statement-html';
 
 // ─── Format Detection ────────────────────────────────────────────────
 
@@ -34,6 +39,11 @@ export async function parseBankStatement(file: File): Promise<BankImportResult> 
   if (extension !== 'pdf') {
     const head = await file.slice(0, 4096).text();
     if (looksLikeHtml(head)) return parseHtmlFile(file);
+  }
+  // Excel real (p. ej. Interbank "Consulta de Movimientos"): primero el lector de tablas
+  if (extension === 'xlsx' || extension === 'xls') {
+    const tabular = await parseSpreadsheetFile(file);
+    if (tabular) return tabular;
   }
 
   if (extension === 'csv' || extension === 'txt') {
@@ -98,7 +108,24 @@ export async function parseBankStatement(file: File): Promise<BankImportResult> 
 
 async function parseHtmlFile(file: File): Promise<BankImportResult> {
   const html = await readHtmlText(file);
-  const statement = parseHtmlStatement(html, { fileName: file.name });
+  return toImportResult(parseHtmlStatement(html, { fileName: file.name }));
+}
+
+/** Hojas de Excel → tablas → mismo lector que el HTML. null si ninguna hoja tiene movimientos */
+async function parseSpreadsheetFile(file: File): Promise<BankImportResult | null> {
+  const XLSX = await import('xlsx');
+  const workbook = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+  const tables: string[][][] = workbook.SheetNames.map((name) =>
+    (XLSX.utils.sheet_to_json(workbook.Sheets[name], { header: 1, raw: false, defval: '' }) as unknown[][]).map(
+      (row) => row.map((cell) => (cell == null ? '' : String(cell))),
+    ),
+  );
+  const rawText = tables.flat().map((row) => row.join(' ')).join('\n');
+  const statement = parseTabularStatement(tables, rawText, { fileName: file.name });
+  return statement.rows.length > 0 ? toImportResult(statement) : null;
+}
+
+function toImportResult(statement: HtmlStatement): BankImportResult {
   const rows: ParsedBankRow[] = statement.rows.map((row) => ({
     transactionDate: row.transactionDate,
     valueDate: row.valueDate,
@@ -118,6 +145,8 @@ async function parseHtmlFile(file: File): Promise<BankImportResult> {
     warnings: rows.length > 0 ? statement.warnings : [],
     skippedCount: 0,
     statement: {
+      accountType: statement.accountType,
+      accountNumber: statement.accountNumber,
       openingBalance: statement.openingBalance,
       closingBalance: statement.closingBalance,
       period: statement.period,

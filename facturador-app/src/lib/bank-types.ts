@@ -113,6 +113,9 @@ export interface ParsedBankRow {
 }
 
 export interface BankStatementSummary {
+  accountType?: string | null;
+  /** N° de cuenta detectado en el archivo */
+  accountNumber?: string | null;
   openingBalance: number | null;
   closingBalance: number | null;
   period: { from: string; to: string } | null;

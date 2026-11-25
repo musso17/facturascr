@@ -18,6 +18,7 @@ import type { ExpenseRecord, InvoiceRecord, PartnerRecord } from './accounting-t
 import type { BankTransaction } from './bank-types';
 import { DETRACTION_RATE, DETRACTION_THRESHOLD } from './detraction';
 import { normalizeText, suggestMatches, type MatchSuggestion } from './collection-matching';
+import { sameAccount } from './bank-accounts';
 
 export type CreditStatus = 'conciliado' | 'clasificado' | 'cobro_no_registrado' | 'registrado_sin_vincular' | 'sin_factura';
 export type DebitStatus =
@@ -66,6 +67,9 @@ export interface StatementReview {
   unbackedInvoices: InvoiceRecord[];
   unbackedExpenses: ExpenseRecord[];
   coverage: { from: string; to: string } | null;
+  /** Facturas y egresos que algún movimiento de esta cuenta explica (para cruzar con otras cuentas) */
+  claimedInvoiceIds: Set<string>;
+  claimedExpenseIds: Set<string>;
 }
 
 const PAYMENT_METHODS_OFF_BANK = new Set(['tarjeta', 'efectivo']);
@@ -84,7 +88,8 @@ const ROUNDING = 1.0;
 export function classifyBankCharge(description: string, amount?: number): BankChargeKind | null {
   const text = normalizeText(description);
   const small = amount === undefined || Math.abs(amount) <= BANK_CHARGE_MAX;
-  if (/\bSUNAT\b/.test(text)) return 'impuesto';
+  // BBVA "*1663-SUNAT NPS", Interbank "PAG SNT NPS"
+  if (/\bSUNAT\b|\bSNT NPS\b/.test(text)) return 'impuesto';
   if (/^ITF\b|^IMPUESTO A LAS TRANSACCIONES/.test(text)) return 'itf';
   if (small && /^(MANTENIMIENTO \d|COMISION DE MANTENIMIENTO|MANT CTA)/.test(text)) return 'mantenimiento';
   if (small && /^(COMIS|COMISION|PORTES|MEMBRESIA)\b/.test(text)) return 'comision';
@@ -122,8 +127,9 @@ export function reviewStatement(input: {
   const linkedTxIds = input.linkedTxIds ?? new Set<string>();
   const isDone = (tx: BankTransaction) => tx.isReconciled || linkedTxIds.has(tx.id);
 
+  // Sin cuenta registrada puede haber entrado a cualquiera; "INTERBANK" en la factura = la cuenta de Interbank
   const inThisAccount = (account: string | null | undefined) =>
-    !account || account === input.statementAccount;
+    !account || sameAccount(account, input.statementAccount);
 
   const dates = transactions.map((tx) => tx.transactionDate).sort();
   const coverage = dates.length > 0 ? { from: dates[0], to: dates[dates.length - 1] } : null;
@@ -256,12 +262,13 @@ export function reviewStatement(input: {
   }
 
   const candidateExpenses = expenses.filter((exp) => !reconciledExpenseIds.has(exp.id));
+  const providerNames = Array.from(new Set(expenses.map((exp) => exp.providerName)));
   const claimedExpenses = new Set<string>();
   const assignDebits = (pending: BankTransaction[], combos: boolean) => {
     const pairs: { tx: BankTransaction; match: ExpenseMatch }[] = [];
     const pool = candidateExpenses.filter((exp) => !claimedExpenses.has(exp.id));
     for (const tx of pending) {
-      for (const match of matchExpenses(tx, pool, 3, combos)) pairs.push({ tx, match });
+      for (const match of matchExpenses(tx, pool, 3, combos, providerNames)) pairs.push({ tx, match });
     }
     pairs.sort(
       (a, b) =>
@@ -321,6 +328,8 @@ export function reviewStatement(input: {
     unbackedInvoices,
     unbackedExpenses,
     coverage,
+    claimedInvoiceIds: claimedInvoices,
+    claimedExpenseIds: claimedExpenses,
   };
 }
 
@@ -339,6 +348,8 @@ export function matchExpenses(
   expenses: ExpenseRecord[],
   limit = 3,
   combos = false,
+  /** Todos los proveedores conocidos: si la glosa nombra a otro, la coincidencia por monto vale menos */
+  providerNames: string[] = [],
 ): ExpenseMatch[] {
   const paidOut = Math.abs(tx.amount);
   const txTime = toTime(tx.transactionDate);
@@ -373,12 +384,19 @@ export function matchExpenses(
     else if (distance <= 15) score += 0.15;
     else if (distance <= 45) score += 0.05;
     if (first.paymentDate && first.status === 'pagado' && distance <= 3) reasons.push('misma fecha de pago');
-    const words = normalizeText(first.providerName)
-      .split(' ')
-      .filter((word) => word.length >= 4);
-    if (words.length > 0 && words.filter((word) => glosa.includes(` ${word} `)).length >= Math.min(2, words.length)) {
+    const named = (provider: string) => {
+      const words = normalizeText(provider)
+        .split(' ')
+        .filter((word) => word.length >= 4);
+      return words.length > 0 && words.filter((word) => glosa.includes(` ${word} `)).length >= Math.min(2, words.length);
+    };
+    if (named(first.providerName)) {
       score += 0.15;
       reasons.push('proveedor en la glosa');
+    } else if (providerNames.some((provider) => provider !== first.providerName && named(provider))) {
+      // Interbank pone el beneficiario en la glosa: si es otra persona, probablemente no es este egreso
+      score -= 0.3;
+      reasons.push('la glosa nombra a otro beneficiario');
     }
     if (group.some((exp) => exp.operationNumber && tx.reference && exp.operationNumber.trim() === tx.reference.trim())) {
       score += 0.2;

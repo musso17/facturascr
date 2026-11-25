@@ -27,6 +27,8 @@ export interface HtmlStatement {
   rows: HtmlStatementRow[];
   bankName: string | null;
   accountType: string | null;
+  /** N° de cuenta si el extracto lo trae (p. ej. 200-3007223739) */
+  accountNumber: string | null;
   holder: string | null;
   currency: string | null;
   openingBalance: number | null;
@@ -128,8 +130,19 @@ export function parseHtmlStatement(
   html: string,
   options: { fileName?: string; today?: Date } = {},
 ): HtmlStatement {
+  return parseTabularStatement(extractTables(html), html, options);
+}
+
+/**
+ * Núcleo común: recibe las tablas ya extraídas (del HTML de BBVA, o de las hojas de un
+ * Excel como la "Consulta de Movimientos" de Interbank) y el texto crudo para metadatos.
+ */
+export function parseTabularStatement(
+  tables: string[][][],
+  rawText: string,
+  options: { fileName?: string; today?: Date } = {},
+): HtmlStatement {
   const warnings: string[] = [];
-  const tables = extractTables(html);
 
   // Tablas de movimientos: las que tienen la cabecera con FECHA y montos. Se leen todas
   // las que repiten la misma cabecera, por si el banco pagina el extracto.
@@ -151,9 +164,9 @@ export function parseHtmlStatement(
 
   const flat = norm(tables.flat().flat().join(' '));
   const bankName =
-    /BBVA|CONTINENTAL/.test(flat) || /BBVA/i.test(html.slice(0, 20000))
+    /BBVA|CONTINENTAL/.test(flat) || /BBVA/i.test(rawText.slice(0, 20000))
       ? 'BBVA'
-      : /INTERBANK/.test(flat)
+      : /INTERBANK|\bI BANC\b|\bI-BANC\b/.test(flat)
         ? 'Interbank'
         : /BCP|CREDITO DEL PERU/.test(flat)
           ? 'BCP'
@@ -164,6 +177,7 @@ export function parseHtmlStatement(
       rows: [],
       bankName,
       accountType: null,
+      accountNumber: null,
       holder: null,
       currency: null,
       openingBalance: null,
@@ -183,12 +197,14 @@ export function parseHtmlStatement(
     }
     return -1;
   };
-  const dateCol = col(/FECHA OPER/, /^FECHA$/, /FECHA/);
-  const valueDateCol = col(/FECHA VALOR/, /F\. ?VALOR/);
+  const dateCol = col(/FECHA (DE )?OPER/, /^FECHA$/, /FECHA/);
+  const valueDateCol = col(/FECHA (DE )?VALOR/, /F\. ?VALOR/, /FECHA DE PROCESO/);
   const descCol = col(/DESCRIPCI/, /CONCEPTO/, /DETALLE/, /GLOSA/);
+  // Interbank separa el tipo ("ABONO PROVEEDORES") del detalle ("OVOSUR")
+  const movementCol = col(/^MOVIMIENTO$/, /^TIPO( DE MOVIMIENTO)?$/);
   const officeCol = col(/OFICINA/, /SUCURSAL/);
   const channelCol = col(/^CAN/, /CANAL/);
-  const opCol = col(/N\S* ?OPER/, /NRO\.? ?OPER/, /OPERACION/, /REFERENCIA/);
+  const opCol = col(/N\S* ?(DE )?OPER/, /NRO\.? ?(DE )?OPER/, /^OPERACION/, /REFERENCIA/);
   const signedCol = col(/CARGO\s*\/\s*ABONO/, /^MONTO/, /IMPORTE/);
   const debitCol = signedCol >= 0 ? -1 : col(/^CARGO/, /DEBITO/, /DEBE/);
   const creditCol = signedCol >= 0 ? -1 : col(/^ABONO/, /CREDITO/, /HABER/);
@@ -199,8 +215,15 @@ export function parseHtmlStatement(
   // 1) El mes del extracto si se conoce (glosa "EMPRESAS YYYY-MM" o nombre "EC_Setiembre 2026"):
   //    un extracto viejo descargado hoy no debe quedar con el año de hoy.
   // 2) Si no, la fecha de descarga que trae el HTML. 3) Si no, hoy.
-  const fullDates = Array.from(html.matchAll(/\b(\d{4})[/-](\d{2})[/-](\d{2})\s+\d{2}:\d{2}(?::\d{2})?\b/g));
-  const generatedAt = fullDates.length > 0 ? new Date(Number(fullDates[0][1]), Number(fullDates[0][2]) - 1, Number(fullDates[0][3])) : null;
+  const fullDates = Array.from(rawText.matchAll(/\b(\d{4})[/-](\d{2})[/-](\d{2})\s+\d{2}:\d{2}(?::\d{2})?\b/g));
+  // Interbank: "Fecha de consulta: 25/11/2026 - 10:28:13"
+  const consulta = /(\d{2})\/(\d{2})\/(\d{4})\s*-?\s*\d{1,2}:\d{2}/.exec(rawText);
+  const generatedAt =
+    fullDates.length > 0
+      ? new Date(Number(fullDates[0][1]), Number(fullDates[0][2]) - 1, Number(fullDates[0][3]))
+      : consulta
+        ? new Date(Number(consulta[3]), Number(consulta[2]) - 1, Number(consulta[1]))
+        : null;
   let periodEnd: Date | null = null;
   let yearSource: HtmlStatement['yearSource'] = generatedAt ? 'fecha_generacion' : 'hoy';
   const tag = /EMPRESAS (20\d{2})-(\d{2})/.exec(flat);
@@ -271,7 +294,10 @@ export function parseHtmlStatement(
   let unreadable = 0;
   for (const raw of bodyRows) {
     if (isHeaderRow(raw)) continue; // cabecera repetida (salto de página)
-    const description = cleanText(raw[descCol] ?? '');
+    const detail = cleanText(raw[descCol] ?? '');
+    const movement = movementCol >= 0 ? cleanText(raw[movementCol] ?? '') : '';
+    // "-" es "sin detalle"
+    const description = [movement, detail].filter((part) => part && part !== '-').join(' ');
     const descNorm = norm(description);
     if (/^SALDO ANTERIOR/.test(descNorm)) {
       const value = parseAmount(raw[balanceCol] ?? '') ?? parseAmount(raw[signedCol] ?? '');
@@ -302,7 +328,7 @@ export function parseHtmlStatement(
       transactionDate,
       valueDate: valueDateCol >= 0 ? valueDateFor(raw[valueDateCol] ?? '', transactionDate) : null,
       description,
-      reference: opCol >= 0 ? cleanText(raw[opCol] ?? '') || null : null,
+      reference: opCol >= 0 ? cleanText(raw[opCol] ?? '').replace(/^-$/, '') || null : null,
       amount,
       itf: itfCol >= 0 ? Math.abs(parseAmount(raw[itfCol] ?? '') ?? 0) : 0,
       balance: balanceCol >= 0 ? parseAmount(raw[balanceCol] ?? '') : null,
@@ -310,6 +336,9 @@ export function parseHtmlStatement(
       channel: channelCol >= 0 ? cleanText(raw[channelCol] ?? '') || null : null,
     });
   }
+
+  // Algunos bancos (Interbank) listan del más reciente al más antiguo: se ordena cronológicamente
+  if (rows.length > 1 && rows[0].transactionDate > rows[rows.length - 1].transactionDate) rows.reverse();
 
   if (unreadable > 0) {
     warnings.push(`${unreadable} fila(s) tienen una fecha en un formato que no se pudo leer y no se importaron.`);
@@ -350,12 +379,15 @@ export function parseHtmlStatement(
   }
 
   const dates = rows.map((row) => row.transactionDate).sort();
-  const accountType = /CUENTA CORRIENTE/.test(flat)
+  const accountType = /CUENTA CORRIENTE|CUENTA: CORRIENTE|CORRIENTE (SOLES|DOLARES)/.test(flat)
     ? 'Cuenta corriente'
     : /CUENTA DE AHORRO|AHORROS/.test(flat)
       ? 'Cuenta de ahorros'
       : null;
-  const currency = /MONEDA:?\s*(SOLES|DOLARES|DÓLARES)/.exec(flat)?.[1] ?? null;
+  const currency =
+    /MONEDA:?\s*(SOLES|DOLARES)/.exec(flat)?.[1] ?? /(?:CORRIENTE|AHORROS?) (SOLES|DOLARES)/.exec(flat)?.[1] ?? null;
+  const accountNumber =
+    /CUENTA:?[^0-9]{0,40}(\d{3}-\d{6,}(?:-\d+)?|\d{4}-\d{4}-\d{2}-\d+)/.exec(flat)?.[1] ?? null;
   const holderIdx = tables.flat().findIndex((row) => norm(row.join(' ')) === 'TITULARES');
   const holder = holderIdx >= 0 ? cleanText(tables.flat()[holderIdx + 1]?.join(' ') ?? '') || null : null;
 
@@ -363,6 +395,7 @@ export function parseHtmlStatement(
     rows,
     bankName,
     accountType,
+    accountNumber,
     holder,
     currency,
     openingBalance,
