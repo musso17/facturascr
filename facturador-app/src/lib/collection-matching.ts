@@ -32,6 +32,8 @@ export interface MatchSuggestion {
   reasons: string[];
   /** Alias/nombre del cliente encontrado en la glosa */
   payerMatched: boolean;
+  /** Días entre el abono y el vencimiento más antiguo (para desempatar) */
+  dateDistance: number;
 }
 
 export interface BankCredit {
@@ -52,9 +54,12 @@ const MAX_PER_CLIENT = 12;
 export function normalizeText(value: string) {
   return value
     .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
+    .replace(/[\u0300-\u036f]/g, '')
     .toUpperCase()
     .replace(/[^A-Z0-9]+/g, ' ')
+    // El banco pega RUC y nombre: "R20552213832CONFEDERACION" → "R 20552213832 CONFEDERACION"
+    .replace(/([A-Z])(\d)/g, '$1 $2')
+    .replace(/(\d)([A-Z])/g, '$1 $2')
     .trim();
 }
 
@@ -85,8 +90,16 @@ function wordInTokens(word: string, tokens: string[]) {
 }
 
 /** ¿La glosa del banco menciona a este cliente? */
-export function payerMatches(glosa: string, partner: PartnerRecord | undefined, clientName: string) {
+export function payerMatches(
+  glosa: string,
+  partner: PartnerRecord | undefined,
+  clientName: string,
+  rucs: string[] = [],
+) {
   const text = ` ${normalizeText(glosa)} `;
+  for (const ruc of rucs) {
+    if (/^\d{11}$/.test(ruc) && text.includes(` ${ruc} `)) return { matched: true, via: 'RUC en la glosa' };
+  }
   if (partner) {
     for (const alias of partner.bankAliases) {
       const normalized = normalizeText(alias);
@@ -199,11 +212,20 @@ export function suggestMatches(
 
   for (const group of byClient.values()) {
     const agent = group.partner?.isRetentionAgent ?? false;
-    const payer = payerMatches(glosa, group.partner, group.name);
-    // Las más antiguas primero: es lo que normalmente se paga
-    const invoices = [...group.invoices]
-      .sort((a, b) => a.dueDate.localeCompare(b.dueDate))
-      .slice(0, payer.matched ? MAX_PER_CLIENT_KNOWN_PAYER : MAX_PER_CLIENT);
+    const rucs = Array.from(new Set(group.invoices.map((inv) => inv.ruc.trim()).filter(Boolean)));
+    const payer = payerMatches(glosa, group.partner, group.name, rucs);
+    // Una factura sola: se prueban todas. Para combinar se toman las más cercanas a la fecha
+    // del abono (no las más antiguas: con muchas facturas cobradas en el pool las recientes quedaban fuera).
+    const allInvoices = [...group.invoices].sort((a, b) => a.dueDate.localeCompare(b.dueDate));
+    const txTime = new Date(`${credit.transactionDate}T00:00:00`).getTime();
+    const invoices = [...allInvoices]
+      .sort(
+        (a, b) =>
+          Math.abs(new Date(`${a.dueDate}T00:00:00`).getTime() - txTime) -
+          Math.abs(new Date(`${b.dueDate}T00:00:00`).getTime() - txTime),
+      )
+      .slice(0, payer.matched ? MAX_PER_CLIENT_KNOWN_PAYER : MAX_PER_CLIENT)
+      .sort((a, b) => a.dueDate.localeCompare(b.dueDate));
     // Sin pagador reconocido, combinar muchas facturas da falsos positivos
     const maxCombo = payer.matched ? MAX_COMBO : 2;
 
@@ -246,11 +268,12 @@ export function suggestMatches(
         difference,
         reasons,
         payerMatched: payer.matched,
+        dateDistance: Math.abs(fromDue),
       });
     };
 
     // Una sola factura, todas sus variantes
-    for (const invoice of invoices) {
+    for (const invoice of allInvoices) {
       for (const option of amountOptions(invoice, agent)) {
         consider(
           [
@@ -280,22 +303,38 @@ export function suggestMatches(
         });
         consider(primary, []);
 
-        // Facturas chicas que juntas superan S/ 700: el agente retiene 3% de todas
-        const noDetraction = combo.every((invoice) => !calcDetraction(invoice.total).applies && invoice.paid <= 0);
+        // Variantes por factura dentro del pago: detracción con o sin decimales en las
+        // sujetas, y en las no sujetas retención 3% (si el pago supera S/ 700) o el total.
+        // Cubre pagos que mezclan ambas, p. ej. 1,298 neta de detracción + 177 con retención.
         const comboTotal = combo.reduce((sum, invoice) => sum + invoice.total, 0);
-        if (noDetraction && comboTotal > 700) {
-          consider(
-            combo.map((invoice) => {
-              const retention = round2(invoice.total * IGV_RETENTION_RATE);
-              return { invoice, received: round2(invoice.total - retention), retention, detractionNotApplied: false };
-            }),
-            [],
-          );
-          // y sin retención (cliente que no es agente)
-          if (!agent) {
+        const anyUnpaidNoDetraction = combo.some(
+          (invoice) => invoice.paid <= 0 && !calcDetraction(invoice.total).applies,
+        );
+        const anyDetraction = combo.some(
+          (invoice) => invoice.paid <= 0 && calcDetraction(invoice.total).applies,
+        );
+        for (const integerDetraction of anyDetraction ? [false, true] : [false]) {
+          for (const withRetention of anyUnpaidNoDetraction ? [true, false] : [false]) {
+            if (withRetention && comboTotal <= 700) continue;
             consider(
-              combo.map((invoice) => ({ invoice, received: invoice.total, retention: 0, detractionNotApplied: false })),
-              [],
+              combo.map((invoice) => {
+                if (invoice.paid > 0) {
+                  return { invoice, received: invoice.balance, retention: 0, detractionNotApplied: false };
+                }
+                const detraction = calcDetraction(invoice.total);
+                if (detraction.applies) {
+                  const received = integerDetraction
+                    ? round2(invoice.total - Math.round(invoice.total * DETRACTION_RATE))
+                    : detraction.netAmount;
+                  return { invoice, received, retention: 0, detractionNotApplied: false };
+                }
+                if (withRetention) {
+                  const retention = round2(invoice.total * IGV_RETENTION_RATE);
+                  return { invoice, received: round2(invoice.total - retention), retention, detractionNotApplied: false };
+                }
+                return { invoice, received: invoice.total, retention: 0, detractionNotApplied: false };
+              }),
+              integerDetraction ? ['detracción redondeada'] : [],
             );
           }
         }
@@ -315,6 +354,12 @@ export function suggestMatches(
   }
 
   return Array.from(best.values())
-    .sort((a, b) => b.score - a.score || Math.abs(a.difference) - Math.abs(b.difference))
+    .sort(
+      (a, b) =>
+        b.score - a.score ||
+        Math.abs(a.difference) - Math.abs(b.difference) ||
+        a.allocations.length - b.allocations.length ||
+        a.dateDistance - b.dateDistance,
+    )
     .slice(0, limit);
 }

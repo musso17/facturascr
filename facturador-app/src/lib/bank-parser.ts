@@ -6,6 +6,7 @@
  */
 
 import type { BankImportResult, ParsedBankRow } from './bank-types';
+import { looksLikeHtml, parseHtmlStatement } from './bank-statement-html';
 
 // ─── Format Detection ────────────────────────────────────────────────
 
@@ -28,6 +29,12 @@ interface ColumnMapping {
 export async function parseBankStatement(file: File): Promise<BankImportResult> {
   const extension = file.name.split('.').pop()?.toLowerCase();
   let rawRows: string[][];
+
+  // Muchos bancos (BBVA "Estado de cuenta") exportan un HTML con extensión .xls
+  if (extension !== 'pdf') {
+    const head = await file.slice(0, 4096).text();
+    if (looksLikeHtml(head)) return parseHtmlFile(file);
+  }
 
   if (extension === 'csv' || extension === 'txt') {
     const text = await file.text();
@@ -85,6 +92,52 @@ export async function parseBankStatement(file: File): Promise<BankImportResult> 
   }
 
   return { rows, bankName, accountName, errors, skippedCount };
+}
+
+// ─── HTML (estado de cuenta) ─────────────────────────────────────────
+
+async function parseHtmlFile(file: File): Promise<BankImportResult> {
+  const html = await readHtmlText(file);
+  const statement = parseHtmlStatement(html, { fileName: file.name });
+  const rows: ParsedBankRow[] = statement.rows.map((row) => ({
+    transactionDate: row.transactionDate,
+    valueDate: row.valueDate,
+    description: row.description,
+    reference: row.reference,
+    amount: row.amount,
+    balance: row.balance,
+    itf: row.itf,
+    office: row.office,
+    channel: row.channel,
+  }));
+  return {
+    rows,
+    bankName: statement.bankName,
+    accountName: statement.accountType,
+    errors: rows.length === 0 ? statement.warnings : [],
+    warnings: rows.length > 0 ? statement.warnings : [],
+    skippedCount: 0,
+    statement: {
+      openingBalance: statement.openingBalance,
+      closingBalance: statement.closingBalance,
+      period: statement.period,
+      balanceMismatches: statement.balanceMismatches.length,
+      currency: statement.currency,
+      yearSource: statement.yearSource,
+    },
+  };
+}
+
+/** Respeta el charset declarado (algunos bancos exportan en ISO-8859-1) */
+async function readHtmlText(file: File) {
+  const buffer = await file.arrayBuffer();
+  const head = new TextDecoder('ascii').decode(buffer.slice(0, 2048));
+  const charset = /charset\s*=\s*["']?([\w-]+)/i.exec(head)?.[1] ?? 'utf-8';
+  try {
+    return new TextDecoder(charset).decode(buffer);
+  } catch {
+    return new TextDecoder('utf-8').decode(buffer);
+  }
 }
 
 // ─── CSV Parser ──────────────────────────────────────────────────────

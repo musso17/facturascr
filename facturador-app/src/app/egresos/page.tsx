@@ -15,7 +15,7 @@ import {
   DocumentViewerModal,
   sameDocumentNumber,
 } from '@/components/documents/DocumentViewerModal';
-import { ChangeEvent, FormEvent, useMemo, useState, ReactNode, useRef } from 'react';
+import { ChangeEvent, FormEvent, useEffect, useMemo, useState, ReactNode, useRef } from 'react';
 import {
   ArrowRightLeft,
   Calendar,
@@ -98,6 +98,8 @@ type ExpenseFormState = {
   otherTaxes: string;
   paymentMethod: PaymentMethod;
   operationNumber: string;
+  /** Fecha real del pago (desde la conciliación); si falta se usa la de emisión */
+  paymentDate?: string;
   category: ExpenseCategory;
   notes: string;
   clientId: string;
@@ -513,6 +515,39 @@ export default function EgresosPage() {
     return match[0]?.category ?? null;
   };
 
+  // Precarga desde Conciliación: /egresos?nuevo=1&fecha=…&monto=…&concepto=…&operacion=…
+  useEffect(() => {
+    const handle = setTimeout(() => {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('nuevo') !== '1') return;
+      const amount = Number(params.get('monto')) || 0;
+      const category = params.get('categoria');
+      const operation = params.get('operacion') ?? '';
+      setForm({
+        ...INITIAL_FORM,
+        issueDate: params.get('fecha') ?? '',
+        dueDate: params.get('fecha') ?? '',
+        providerName: params.get('proveedor') ?? '',
+        concept: params.get('concepto') ?? '',
+        baseAmount: amount ? String(amount) : '',
+        igvAmount: '0',
+        operationNumber: operation,
+        paymentDate: params.get('fecha') ?? '',
+        paymentMethod: 'transferencia',
+        category: CATEGORY_OPTIONS.some((option) => option.value === category)
+          ? (category as ExpenseCategory)
+          : INITIAL_FORM.category,
+        alreadyPaid: params.get('pagado') === '1',
+        notes: `Registrado desde la conciliación bancaria${operation ? ` (op. ${operation})` : ''}. Completa el comprobante.`,
+      });
+      setEditingExpenseId(null);
+      setFormError(null);
+      setIsModalOpen(true);
+      window.history.replaceState(null, '', '/egresos');
+    }, 0);
+    return () => clearTimeout(handle);
+  }, []);
+
   const openCreateModal = () => {
     setForm(INITIAL_FORM);
     setEditingExpenseId(null);
@@ -538,6 +573,7 @@ export default function EgresosPage() {
       otherTaxes: expense.otherTaxes ? String(expense.otherTaxes) : '',
       paymentMethod: expense.paymentMethod ?? 'transferencia',
       operationNumber: expense.operationNumber ?? '',
+      paymentDate: expense.paymentDate ?? '',
       category: expense.category,
       notes: expense.notes ?? '',
       clientId: expense.clientId ?? '',
@@ -633,7 +669,7 @@ export default function EgresosPage() {
       concept: form.concept.trim(),
       paymentMethod: form.paymentMethod,
       operationNumber: form.operationNumber || null,
-      paymentDate: form.alreadyPaid ? form.issueDate : null,
+      paymentDate: form.alreadyPaid ? form.paymentDate || form.issueDate : null,
       baseAmount: base,
       igvAmount: igv,
       irRetention: ir,

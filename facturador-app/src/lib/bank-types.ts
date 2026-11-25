@@ -16,6 +16,8 @@ export interface BankTransaction {
   importBatch: string | null;
   isReconciled: boolean;
   notes: string | null;
+  /** ITF del movimiento, si el extracto lo trae */
+  itf: number;
 }
 
 export interface SupabaseBankTransactionRow {
@@ -104,6 +106,20 @@ export interface ParsedBankRow {
   reference: string | null;
   amount: number;
   balance: number | null;
+  /** ITF cobrado por el movimiento (estados de cuenta BBVA) */
+  itf?: number;
+  office?: string | null;
+  channel?: string | null;
+}
+
+export interface BankStatementSummary {
+  openingBalance: number | null;
+  closingBalance: number | null;
+  period: { from: string; to: string } | null;
+  /** Filas cuyo saldo no cuadra: si es > 0, falta algún movimiento */
+  balanceMismatches: number;
+  currency: string | null;
+  yearSource: string;
 }
 
 export interface BankImportResult {
@@ -111,7 +127,9 @@ export interface BankImportResult {
   bankName: string | null;
   accountName: string | null;
   errors: string[];
+  warnings?: string[];
   skippedCount: number;
+  statement?: BankStatementSummary;
 }
 
 // ─── Quick-Label Categories ──────────────────────────────────────────

@@ -152,8 +152,9 @@ export function useInvoices() {
       }
 
       const detraction = calcDetraction(target.total);
+      // La detracción se descuenta una sola vez: en el primer cobro de la factura
       const detractionCovers =
-        detraction.applies && input.detractionStatus !== 'no_aplicada'
+        detraction.applies && input.detractionStatus !== 'no_aplicada' && target.paid <= 0
           ? detraction.detractionAmount
           : 0;
       const settled = input.receivedAmount + input.igvRetention + detractionCovers;
@@ -272,6 +273,46 @@ export function useInvoices() {
     [collectionColumns, applyRow],
   );
 
+  /**
+   * Completa los datos de un cobro ya registrado con lo que dice el banco
+   * (fecha, cuenta, N° de operación y retención), sin tocar el monto pagado.
+   */
+  const updateCollectionInfo = useCallback(
+    async (
+      invoiceId: string,
+      info: {
+        paymentDate: string;
+        paymentAccount: string;
+        paymentReference: string;
+        igvRetention?: number;
+        /** Lo que muestra el banco: p. ej. 'no_aplicada' si el cliente pagó el total sin detraer */
+        detractionStatus?: DetractionStatus;
+      },
+    ): Promise<InvoiceMutationResult> => {
+      const payload: Record<string, unknown> = {
+        payment_date: info.paymentDate,
+        payment_reference: info.paymentReference.trim() || null,
+      };
+      if (collectionColumns) {
+        payload.payment_account = info.paymentAccount.trim() || null;
+        if (info.igvRetention && info.igvRetention > 0) payload.igv_retention = round(info.igvRetention);
+        if (info.detractionStatus) payload.detraction_status = info.detractionStatus;
+      }
+      const { data, error } = await supabase
+        .from('invoices')
+        .update(payload)
+        .eq('id', invoiceId)
+        .select()
+        .single();
+      if (error) {
+        console.error(error);
+        return { error: describeSupabaseError(error) ?? 'No se pudo actualizar el cobro.' };
+      }
+      return applyRow(invoiceId, data);
+    },
+    [collectionColumns, applyRow],
+  );
+
   /** P6: corrige la cuenta a la que entró un cobro ya registrado */
   const setPaymentAccount = useCallback(
     async (invoiceId: string, account: string): Promise<InvoiceMutationResult> => {
@@ -320,5 +361,6 @@ export function useInvoices() {
     revertPayment,
     setDetractionStatus,
     setPaymentAccount,
+    updateCollectionInfo,
   };
 }

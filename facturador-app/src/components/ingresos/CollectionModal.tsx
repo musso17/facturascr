@@ -96,8 +96,11 @@ export function CollectionModal({
   const preview = useMemo(() => {
     if (!invoice) return null;
     const detraction = calcDetraction(invoice.total);
+    // La detracción se descuenta una sola vez: en el primer cobro (igual que registerCollection)
     const detractionCovers =
-      detraction.applies && form.detractionStatus !== 'no_aplicada' ? detraction.detractionAmount : 0;
+      detraction.applies && form.detractionStatus !== 'no_aplicada' && invoice.paid <= 0
+        ? detraction.detractionAmount
+        : 0;
     const received = Number(form.receivedAmount) || 0;
     const retention = Number(form.igvRetention) || 0;
     const settled = round2(received + retention + detractionCovers);
