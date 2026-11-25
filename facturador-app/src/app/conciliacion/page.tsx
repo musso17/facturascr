@@ -442,9 +442,11 @@ export default function ConciliacionPage() {
       const share =
         index === match.expenses.length - 1 ? round2(remaining) : Math.min(remaining, netPayable(expense).amount);
       remaining = round2(remaining - share);
+      // Reembolso a un socio: la compra ya está pagada (con su tarjeta, en su fecha); solo se vincula.
       // Pendiente → se marca pagado; ya pagado → se corrige con la fecha y el N° de operación del banco
-      const result =
-        expense.status !== 'pagado'
+      const result: { error?: string } = match.variant === 'reembolso'
+        ? {}
+        : expense.status !== 'pagado'
           ? await updateExpense(expense.id, {
               status: 'pagado',
               paidAmount: expense.totalAmount,
@@ -869,13 +871,19 @@ export default function ConciliacionPage() {
                   </DebitRow>
                 ))}
                 {unknownDebits.map((item) => (
-                  <MovementRow key={item.tx.id} tx={item.tx} badge="Sin comprobante">
+                  <MovementRow
+                    key={item.tx.id}
+                    tx={item.tx}
+                    badge={item.reimbursementTo ? `Reembolso a ${item.reimbursementTo} sin compra registrada` : 'Sin comprobante'}
+                  >
                     <div className="flex flex-wrap items-center gap-2">
                       <Link
                         href={egresosPrefillUrl({
                           fecha: item.tx.transactionDate,
                           monto: Math.abs(item.tx.amount),
-                          concepto: item.tx.description,
+                          concepto: item.reimbursementTo
+                            ? `Compra reembolsada a ${item.reimbursementTo} (${item.tx.description})`
+                            : item.tx.description,
                           operacion: item.tx.reference ?? '',
                         })}
                         className="inline-flex items-center gap-1.5 rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-700"
@@ -1221,8 +1229,11 @@ function DebitRow({ item, children }: { item: DebitReview; children: ReactNode }
           <Confidence score={match.score} />
           {match.expenses.map((e) => `${e.documentSeries ? `${e.documentSeries}-` : ''}${e.documentNumber}`).join(' + ')}
           <span className="font-normal text-slate-500">
-            · {shortenName(expense.providerName, 36)} ·{' '}
-            {match.expenses.every((e) => e.status === 'pagado') ? 'ya pagado' : 'pendiente'}
+            {match.variant === 'reembolso'
+              ? `· ${match.reasons[0]}`
+              : `· ${shortenName(expense.providerName, 36)} · ${
+                  match.expenses.every((e) => e.status === 'pagado') ? 'ya pagado' : 'pendiente'
+                }`}
           </span>
         </p>
         <p className="text-xs text-slate-500">
@@ -1230,12 +1241,13 @@ function DebitRow({ item, children }: { item: DebitReview; children: ReactNode }
             .map((e) => {
               const net = netPayable(e);
               const kind = e.documentType === 'recibo' ? 'Recibo' : e.documentType === 'boleta' ? 'Boleta' : 'Factura';
-              return `${kind} ${fmt(e.totalAmount)}${
+              return `${kind}${match.variant === 'reembolso' ? ` ${shortenName(e.providerName, 22)}` : ''} ${fmt(e.totalAmount)}${
                 net.amount !== e.totalAmount ? ` − retención IR ${fmt(e.irRetention)}` : ''
               }`;
             })
             .join(' + ')}
           {match.variant === 'neto_detraccion' && <> − detracción 12%</>} = {fmt(match.expected)}
+          {match.variant === 'reembolso' && <> · compras pagadas por el socio</>}
         </p>
         <p className="text-[11px] text-slate-400">{match.reasons.join(' · ')}</p>
       </div>

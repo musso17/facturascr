@@ -38,7 +38,8 @@ export interface ExpenseMatch {
   expenses: ExpenseRecord[];
   /** Monto que debió salir del banco */
   expected: number;
-  variant: 'neto' | 'neto_detraccion' | 'saldo' | 'varios';
+  /** reembolso: transferencia a un socio por compras que pagó él (tarjeta/efectivo) */
+  variant: 'neto' | 'neto_detraccion' | 'saldo' | 'varios' | 'reembolso';
   difference: number;
   score: number;
   reasons: string[];
@@ -58,6 +59,8 @@ export interface DebitReview {
   status: DebitStatus;
   match?: ExpenseMatch;
   chargeKind?: BankChargeKind;
+  /** La glosa nombra a un socio/persona: si no hay comprobante, es un reembolso sin compra registrada */
+  reimbursementTo?: string;
 }
 
 export interface StatementReview {
@@ -263,12 +266,20 @@ export function reviewStatement(input: {
 
   const candidateExpenses = expenses.filter((exp) => !reconciledExpenseIds.has(exp.id));
   const providerNames = Array.from(new Set(expenses.map((exp) => exp.providerName)));
+  // Personas (emiten recibos por honorarios): una transferencia a su nombre puede ser un reembolso
+  const people = Array.from(new Set(expenses.filter((exp) => exp.documentType === 'recibo').map((exp) => exp.providerName)));
+  const payeeOf = (tx: BankTransaction) => {
+    const glosa = ` ${normalizeText(`${tx.description} ${tx.reference ?? ''}`)} `;
+    return people.find((person) => namesProvider(glosa, person)) ?? null;
+  };
   const claimedExpenses = new Set<string>();
   const assignDebits = (pending: BankTransaction[], combos: boolean) => {
     const pairs: { tx: BankTransaction; match: ExpenseMatch }[] = [];
     const pool = candidateExpenses.filter((exp) => !claimedExpenses.has(exp.id));
     for (const tx of pending) {
       for (const match of matchExpenses(tx, pool, 3, combos, providerNames)) pairs.push({ tx, match });
+      const payee = combos ? null : payeeOf(tx);
+      if (payee) for (const match of matchReimbursements(tx, pool, payee)) pairs.push({ tx, match });
     }
     pairs.sort(
       (a, b) =>
@@ -292,7 +303,9 @@ export function reviewStatement(input: {
   // Segunda vuelta: dos comprobantes del mismo proveedor pagados en una transferencia
   assignDebits(openDebits.filter((tx) => !debitReviews.has(tx.id)), true);
   for (const tx of openDebits) {
-    if (!debitReviews.has(tx.id)) debitReviews.set(tx.id, { tx, status: 'sin_comprobante' });
+    if (!debitReviews.has(tx.id)) {
+      debitReviews.set(tx.id, { tx, status: 'sin_comprobante', reimbursementTo: payeeOf(tx) ?? undefined });
+    }
   }
 
   // ── Registrado como pagado pero sin movimiento en el extracto ──
@@ -331,6 +344,82 @@ export function reviewStatement(input: {
     claimedInvoiceIds: claimedInvoices,
     claimedExpenseIds: claimedExpenses,
   };
+}
+
+/** ¿La glosa nombra a este proveedor? (al menos 2 palabras de 4+ letras, o todas si tiene menos) */
+function namesProvider(glosa: string, provider: string) {
+  const words = normalizeText(provider)
+    .split(' ')
+    .filter((word) => word.length >= 4);
+  return words.length > 0 && words.filter((word) => glosa.includes(` ${word} `)).length >= Math.min(2, words.length);
+}
+
+/** Proveedores del exterior: se cobran en dólares, el monto en soles varía con el tipo de cambio */
+function isForeignProvider(expense: ExpenseRecord) {
+  return !expense.providerDocument && /\b(LLC|PBC|INC|LTD|AB|GMBH|CORP|BV)\b/.test(normalizeText(expense.providerName));
+}
+
+/**
+ * Reembolso a un socio: la transferencia paga compras de otros proveedores que el socio pagó
+ * con su tarjeta o en efectivo (1 a 4 compras de los 90 días anteriores).
+ */
+export function matchReimbursements(tx: BankTransaction, expenses: ExpenseRecord[], payee: string, limit = 3): ExpenseMatch[] {
+  const paidOut = Math.abs(tx.amount);
+  const txTime = toTime(tx.transactionDate);
+  const candidates = expenses
+    .filter(
+      (exp) =>
+        exp.providerName !== payee &&
+        exp.status === 'pagado' &&
+        exp.documentType !== 'recibo' &&
+        !isBankCostExpense(exp) &&
+        toTime(exp.issueDate) <= txTime + 3 * DAY &&
+        toTime(exp.issueDate) >= txTime - 90 * DAY,
+    )
+    .sort((a, b) => b.issueDate.localeCompare(a.issueDate))
+    .slice(0, 14);
+
+  const results: ExpenseMatch[] = [];
+  const visit = (start: number, group: ExpenseRecord[]) => {
+    if (group.length > 0) {
+      const expected = round2(group.reduce((sum, exp) => sum + netPayable(exp).amount, 0));
+      const difference = round2(paidOut - expected);
+      // Compras en dólares: hasta 4% (mín. S/ 1) de diferencia por tipo de cambio
+      const fxTolerance = group
+        .filter(isForeignProvider)
+        .reduce((sum, exp) => sum + Math.max(1, netPayable(exp).amount * 0.04), 0);
+      const abs = Math.abs(difference);
+      if (abs <= EXACT || (fxTolerance > 0 && abs <= fxTolerance)) {
+        const exact = abs <= EXACT;
+        const newest = group.reduce((max, exp) => (exp.issueDate > max ? exp.issueDate : max), group[0].issueDate);
+        results.push({
+          expense: group[0],
+          expenses: [...group],
+          expected,
+          variant: 'reembolso',
+          difference,
+          // Marcada como pagada por transferencia: pudo ser la transferencia al socio, pero vale algo menos
+          score: round2(
+            (exact ? 0.85 : 0.65) -
+              0.05 * (group.length - 1) -
+              (group.some((exp) => exp.paymentMethod && !PAYMENT_METHODS_OFF_BANK.has(exp.paymentMethod)) ? 0.1 : 0),
+          ),
+          reasons: [
+            `reembolso a ${payee}`,
+            exact ? 'monto exacto' : `difiere ${difference > 0 ? '+' : ''}${difference.toFixed(2)} (tipo de cambio)`,
+            ...(group.length > 1 ? [`${group.length} compras`] : []),
+          ],
+          dateDistance: Math.round(Math.abs(txTime - toTime(newest)) / DAY),
+        });
+      }
+    }
+    if (group.length >= 4) return;
+    for (let i = start; i < candidates.length; i += 1) visit(i + 1, [...group, candidates[i]]);
+  };
+  visit(0, []);
+  return results
+    .sort((a, b) => b.score - a.score || Math.abs(a.difference) - Math.abs(b.difference) || a.dateDistance - b.dateDistance)
+    .slice(0, limit);
 }
 
 /**
